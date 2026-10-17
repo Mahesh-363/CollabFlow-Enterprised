@@ -1,4 +1,4 @@
-# Production-grade pinned dependencies for CollabFlow backend
+﻿# Production-grade pinned dependencies for CollabFlow backend
 Django==5.1.2
 djangorestframework==3.15.2
 djangorestframework-simplejwt==5.3.1
@@ -21,7 +21,7 @@ boto3==1.35.53
 pyotp==2.9.0
 qrcode==8.0
 python-dateutil==2.9.0.post0
-google-genai==0.1.1
+google-genai==1.75.0
 cryptography==43.0.3
 
 # Development, testing, and observability

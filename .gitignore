@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+
+.venv/
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.env
