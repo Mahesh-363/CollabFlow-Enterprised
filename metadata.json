@@ -1,0 +1,6 @@
+{
+  "name": "CollabFlow - Enterprise Real-Time Collaboration",
+  "description": "World-class production-grade real-time collaboration platform featuring channels, WebSockets, threads, presence, reactions, role-based access, and enterprise Django & Next.js architecture.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

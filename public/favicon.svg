@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="cf-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9333ea" />
+      <stop offset="50%" stop-color="#7c3aed" />
+      <stop offset="100%" stop-color="#4f46e5" />
+    </linearGradient>
+    <linearGradient id="cf-glow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.25" />
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded squircle with subtle border -->
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#cf-grad)" stroke="#a855f7" stroke-width="1.5" />
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#cf-glow)" />
+
+  <!-- Distinctive, high-legibility CollabFlow 'C' & interconnected flow nodes -->
+  <!-- Main flow arc / stylized C -->
+  <path d="M42 21 C36 15 28 15 22 21 C15 28 15 36 22 43 C28 49 36 49 42 43" 
+        fill="none" 
+        stroke="#ffffff" 
+        stroke-width="6.5" 
+        stroke-linecap="round" />
+
+  <!-- Flow branch & collaboration nodes -->
+  <path d="M30 32 L44 32" 
+        stroke="#ffffff" 
+        stroke-width="5" 
+        stroke-linecap="round" />
+
+  <!-- Top-right pulse node -->
+  <circle cx="43" cy="21" r="3.5" fill="#f5f3ff" />
+  <!-- Center pulse node -->
+  <circle cx="44" cy="32" r="3.5" fill="#f5f3ff" />
+  <!-- Bottom-right pulse node -->
+  <circle cx="43" cy="43" r="3.5" fill="#f5f3ff" />
+</svg>
