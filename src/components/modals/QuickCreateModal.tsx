@@ -7,6 +7,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCollabStore } from '../../store/useCollabStore';
+import { getTodayDateStr } from '../../utils/dateClock';
 
 export const QuickCreateModal: React.FC = () => {
   const {
@@ -22,7 +23,7 @@ export const QuickCreateModal: React.FC = () => {
   const [activeType, setActiveType] = useState<'task' | 'event' | 'reminder'>('task');
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
-  const [date, setDate] = useState('2026-10-16');
+  const [date, setDate] = useState(() => getTodayDateStr());
   const [time, setTime] = useState('14:00');
 
   if (!isQuickCreateOpen) return null;

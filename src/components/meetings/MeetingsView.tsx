@@ -17,6 +17,7 @@ import { useCollabStore } from '../../store/useCollabStore';
 import { MeetingRoom } from './MeetingRoom';
 import { UserAvatar } from '../UserAvatar';
 import { getMeetingTimeStatus } from '../../utils/collabSuiteLogic';
+import { getTodayDateStr } from '../../utils/dateClock';
 
 export const MeetingsView: React.FC = () => {
   const {
@@ -37,7 +38,7 @@ export const MeetingsView: React.FC = () => {
   // Form state for scheduling new meeting
   const [formTitle, setFormTitle] = useState('');
   const [formDesc, setFormDesc] = useState('');
-  const [formDate, setFormDate] = useState('2026-10-16');
+  const [formDate, setFormDate] = useState(() => getTodayDateStr());
   const [formTime, setFormTime] = useState('11:00');
   const [formDuration, setFormDuration] = useState(45);
   const [formParticipants, setFormParticipants] = useState<string[]>([currentUser.id]);

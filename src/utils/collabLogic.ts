@@ -28,6 +28,49 @@ export function canCreateChannel(user: User): boolean {
 }
 
 /**
+ * Validates and sanitizes a channel name.
+ * Checks for non-empty alphanumeric string and uniqueness within the workspace.
+ */
+export function validateChannelName(
+  name: string,
+  existingChannels: Channel[],
+  workspaceId: string
+): { isValid: boolean; cleanName: string; error?: string } {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return { isValid: false, cleanName: '', error: 'Channel name is required.' };
+  }
+
+  const cleanName = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  if (!cleanName) {
+    return {
+      isValid: false,
+      cleanName: '',
+      error: 'Channel name must contain alphanumeric characters.',
+    };
+  }
+
+  const isDuplicate = existingChannels.some(
+    (c) => c.workspaceId === workspaceId && c.name.toLowerCase() === cleanName
+  );
+
+  if (isDuplicate) {
+    return {
+      isValid: false,
+      cleanName,
+      error: `A channel named "#${cleanName}" already exists in this workspace.`,
+    };
+  }
+
+  return { isValid: true, cleanName };
+}
+
+/**
  * Checks if a user can access a channel (private channels require membership).
  */
 export function canAccessChannel(user: User, channel: Channel): boolean {
@@ -332,10 +375,9 @@ export function formatMessageTime(isoString: string): string {
 /**
  * Format date divider heading (e.g., Today, Yesterday, or October 15, 2026).
  */
-export function formatDateDivider(isoString: string): string {
+export function formatDateDivider(isoString: string, now: Date = new Date()): string {
   try {
     const date = new Date(isoString);
-    const now = new Date();
     const isToday =
       date.getDate() === now.getDate() &&
       date.getMonth() === now.getMonth() &&

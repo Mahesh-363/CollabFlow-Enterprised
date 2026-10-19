@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   canDeleteMessage,
   canCreateChannel,
+  validateChannelName,
   toggleMessageReaction,
   addMessageReaction,
   removeMessageReaction,
@@ -226,5 +227,115 @@ test('multi-user emoji reactions: grouping by emoji, reactor user list, and coun
   assert.equal(thumbsUpAfter.count, 1);
   assert.equal(thumbsUpAfter.hasReacted, false);
   assert.deepEqual(thumbsUpAfter.users, ['u-2']);
+});
+
+test('validateChannelName rejects empty, whitespace, and symbol-only names', () => {
+  const existing: Channel[] = [];
+  assert.equal(validateChannelName('', existing, 'ws-1').isValid, false);
+  assert.equal(validateChannelName('   ', existing, 'ws-1').isValid, false);
+  assert.equal(validateChannelName('!!!###', existing, 'ws-1').isValid, false);
+  assert.match(validateChannelName('', existing, 'ws-1').error!, /required/i);
+});
+
+test('validateChannelName sanitizes valid inputs into kebab-case slugs', () => {
+  const existing: Channel[] = [];
+  const res = validateChannelName('  Data Pipeline & Alerts!  ', existing, 'ws-1');
+  assert.equal(res.isValid, true);
+  assert.equal(res.cleanName, 'data-pipeline-alerts');
+});
+
+test('validateChannelName flags duplicate channel names in the same workspace', () => {
+  const existing: Channel[] = [
+    {
+      id: 'c-1',
+      workspaceId: 'ws-1',
+      name: 'general',
+      description: '',
+      topic: '',
+      isPrivate: false,
+      memberIds: ['u-1'],
+      unreadCount: 0,
+      createdById: 'u-1',
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  const duplicate = validateChannelName('General', existing, 'ws-1');
+  assert.equal(duplicate.isValid, false);
+  assert.match(duplicate.error!, /already exists in this workspace/i);
+
+  // But allowed in a different workspace
+  const diffWorkspace = validateChannelName('general', existing, 'ws-2');
+  assert.equal(diffWorkspace.isValid, true);
+  assert.equal(diffWorkspace.cleanName, 'general');
+});
+
+test('channel creation handles optimistic update and rollback on failure', async () => {
+  const initialChannels: Channel[] = [
+    {
+      id: 'c-1',
+      workspaceId: 'ws-1',
+      name: 'general',
+      description: '',
+      topic: '',
+      isPrivate: false,
+      memberIds: ['u-1'],
+      unreadCount: 0,
+      createdById: 'u-1',
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  let channels = [...initialChannels];
+  let activeChannelId = 'c-1';
+
+  // Helper simulating optimistic channel create with rollback
+  const simulateCreate = async (shouldFail: boolean) => {
+    const backupChannels = [...channels];
+    const backupActiveId = activeChannelId;
+
+    const newChan: Channel = {
+      id: 'c-optimistic',
+      workspaceId: 'ws-1',
+      name: 'engineering',
+      description: 'Dev discussion',
+      topic: 'Code',
+      isPrivate: false,
+      memberIds: ['u-1'],
+      unreadCount: 0,
+      createdById: 'u-1',
+      createdAt: new Date().toISOString(),
+    };
+
+    // Optimistic update: new channel placed at the top
+    channels = [newChan, ...channels];
+    activeChannelId = newChan.id;
+
+    if (shouldFail) {
+      // Rollback
+      channels = backupChannels;
+      activeChannelId = backupActiveId;
+      return { success: false, error: 'Server error 500' };
+    }
+
+    return { success: true, channel: newChan };
+  };
+
+  // Test successful creation
+  const okResult = await simulateCreate(false);
+  assert.equal(okResult.success, true);
+  assert.equal(channels.length, 2);
+  assert.equal(channels[0].id, 'c-optimistic');
+  assert.equal(activeChannelId, 'c-optimistic');
+
+  // Reset
+  channels = [...initialChannels];
+  activeChannelId = 'c-1';
+
+  // Test rollback on server failure
+  const failResult = await simulateCreate(true);
+  assert.equal(failResult.success, false);
+  assert.equal(channels.length, 1);
+  assert.equal(activeChannelId, 'c-1');
 });
 

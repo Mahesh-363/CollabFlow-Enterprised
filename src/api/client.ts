@@ -45,7 +45,7 @@ class ApiClient {
 
   public getAccessToken(): string | null {
     try {
-      return localStorage.getItem('collabflow_access_token');
+      return localStorage.getItem('collabflow_access_token') || sessionStorage.getItem('collabflow_access_token');
     } catch {
       return null;
     }
@@ -53,17 +53,27 @@ class ApiClient {
 
   public getRefreshToken(): string | null {
     try {
-      return localStorage.getItem('collabflow_refresh_token');
+      return localStorage.getItem('collabflow_refresh_token') || sessionStorage.getItem('collabflow_refresh_token');
     } catch {
       return null;
     }
   }
 
-  public setTokens(access: string, refresh?: string): void {
+  public setTokens(access: string, refresh?: string, rememberMe?: boolean): void {
     try {
-      localStorage.setItem('collabflow_access_token', access);
+      const isRemember =
+        rememberMe !== undefined
+          ? rememberMe
+          : localStorage.getItem('collabflow_remember_device') !== 'false';
+      const primary = isRemember ? localStorage : sessionStorage;
+      const secondary = isRemember ? sessionStorage : localStorage;
+
+      primary.setItem('collabflow_access_token', access);
+      secondary.removeItem('collabflow_access_token');
+
       if (refresh) {
-        localStorage.setItem('collabflow_refresh_token', refresh);
+        primary.setItem('collabflow_refresh_token', refresh);
+        secondary.removeItem('collabflow_refresh_token');
       }
     } catch {
       // Storage unavailable
@@ -74,6 +84,8 @@ class ApiClient {
     try {
       localStorage.removeItem('collabflow_access_token');
       localStorage.removeItem('collabflow_refresh_token');
+      sessionStorage.removeItem('collabflow_access_token');
+      sessionStorage.removeItem('collabflow_refresh_token');
     } catch {
       // Storage unavailable
     }
@@ -92,31 +104,35 @@ class ApiClient {
    * Health check to test backend availability
    */
   public async checkHealth(): Promise<{ isHealthy: boolean; latencyMs: number; details?: any }> {
+    const rawApiUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+    if (!rawApiUrl) {
+      // When VITE_API_URL is not set, make no network request at all and go straight to Demo mode
+      return { isHealthy: false, latencyMs: 0 };
+    }
+
     const start = performance.now();
     try {
-      const response = await fetch('/api/health/', {
+      const cleanUrl = rawApiUrl.replace(/\/+$/, '');
+      const healthUrl = `${cleanUrl}/health/`;
+      const response = await fetch(healthUrl, {
         method: 'GET',
         headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(1500),
       });
       const latencyMs = Math.round(performance.now() - start);
-      if (response.ok) {
-        const data = await response.json();
-        return { isHealthy: true, latencyMs, details: data };
+
+      if (response.status === 200) {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await response.json();
+          if (data && data.status === 'healthy') {
+            return { isHealthy: true, latencyMs, details: data };
+          }
+        }
       }
       return { isHealthy: false, latencyMs };
     } catch {
-      // Fallback check on root /api/v1/
-      try {
-        const response2 = await fetch(`${this.baseUrl}/`, {
-          method: 'GET',
-          signal: AbortSignal.timeout(2000),
-        });
-        const latencyMs2 = Math.round(performance.now() - start);
-        return { isHealthy: response2.ok, latencyMs: latencyMs2 };
-      } catch {
-        return { isHealthy: false, latencyMs: 0 };
-      }
+      return { isHealthy: false, latencyMs: 0 };
     }
   }
 

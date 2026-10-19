@@ -82,6 +82,7 @@ export const WallE3DScene: React.FC<WallE3DSceneProps> = ({ onOpenGame, classNam
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
+    renderer.domElement.style.touchAction = 'pan-y';
     container.appendChild(renderer.domElement);
 
     // 2. Studio Environment reflections (RoomEnvironment)
@@ -803,8 +804,9 @@ export const WallE3DScene: React.FC<WallE3DSceneProps> = ({ onOpenGame, classNam
       {/* THREE.JS CANVAS CONTAINER (Dedicated mount ref) */}
       <div
         ref={mountRef}
-        className="relative w-full h-[260px] sm:h-[300px] cursor-grab active:cursor-grabbing flex items-center justify-center select-none"
+        className="relative w-full h-[260px] sm:h-[300px] cursor-grab active:cursor-grabbing flex items-center justify-center select-none touch-pan-y"
         title="Click and drag to rotate WALL-E"
+        style={{ touchAction: 'pan-y' }}
       />
 
       {/* INTERACTIVE ACTIONS DOCK */}

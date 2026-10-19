@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   FolderGit2,
   Upload,
@@ -12,26 +12,60 @@ import {
   Eye,
   Plus,
   Check,
+  X,
+  AlertCircle,
+  FileCheck,
+  CheckCircle2,
 } from 'lucide-react';
 import { useCollabStore } from '../../store/useCollabStore';
 import { UserAvatar } from '../UserAvatar';
 import { WorkspaceFile } from '../../types/collab';
+import {
+  validateUploadFile,
+  formatFileSize,
+  detectFileCategory,
+  MAX_FILE_SIZE_BYTES,
+} from '../../utils/fileUploadLogic';
+import { apiClient } from '../../api/client';
+
+interface SelectedUploadItem {
+  id: string;
+  file: File;
+  name: string;
+  type: WorkspaceFile['type'];
+  size: string;
+  sizeBytes: number;
+  previewUrl?: string;
+  error?: string;
+}
 
 export const FilesView: React.FC = () => {
-  const { workspaceFiles, users, uploadWorkspaceFile, deleteWorkspaceFile, currentUser } =
-    useCollabStore();
+  const {
+    workspaceFiles,
+    users,
+    uploadWorkspaceFile,
+    deleteWorkspaceFile,
+    currentUser,
+    backendConnected,
+    activeChannelId,
+  } = useCollabStore();
 
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState<WorkspaceFile | null>(null);
 
-  // Upload form state
-  const [fileName, setFileName] = useState('');
-  const [fileType, setFileType] = useState<WorkspaceFile['type']>('document');
-  const [fileSizeText, setFileSizeText] = useState('1.5 MB');
+  // Upload queue & drag-and-drop state
+  const [uploadQueue, setUploadQueue] = useState<SelectedUploadItem[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isRealBackend = Boolean(import.meta.env.VITE_API_URL) && backendConnected;
 
   const filteredFiles = workspaceFiles.filter((f) => {
     if (activeCategory !== 'all' && f.type !== activeCategory) return false;
@@ -42,31 +76,158 @@ export const FilesView: React.FC = () => {
     return true;
   });
 
-  const handleUploadSubmit = (e: React.FormEvent) => {
+  const handleFilesAdded = (incomingFiles: FileList | File[]) => {
+    setUploadError(null);
+    setUploadSuccess(null);
+
+    const newItems: SelectedUploadItem[] = [];
+
+    Array.from(incomingFiles).forEach((file) => {
+      const validation = validateUploadFile({ name: file.name, size: file.size });
+      const previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined;
+
+      newItems.push({
+        id: `upload-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        file,
+        name: file.name,
+        type: validation.category,
+        size: formatFileSize(file.size),
+        sizeBytes: file.size,
+        previewUrl,
+        error: validation.valid ? undefined : validation.error,
+      });
+    });
+
+    setUploadQueue((prev) => [...prev, ...newItems]);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    if (!fileName.trim()) return;
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFilesAdded(e.dataTransfer.files);
+    }
+  };
+
+  const removeQueueItem = (id: string) => {
+    setUploadQueue((prev) => {
+      const item = prev.find((i) => i.id === id);
+      if (item?.previewUrl) {
+        URL.revokeObjectURL(item.previewUrl);
+      }
+      return prev.filter((i) => i.id !== id);
+    });
+  };
+
+  const updateItemName = (id: string, newName: string) => {
+    setUploadQueue((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        const validation = validateUploadFile({ name: newName, size: item.sizeBytes });
+        return {
+          ...item,
+          name: newName,
+          type: validation.category,
+          error: validation.valid ? undefined : validation.error,
+        };
+      })
+    );
+  };
+
+  const updateItemType = (id: string, newType: WorkspaceFile['type']) => {
+    setUploadQueue((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, type: newType } : item))
+    );
+  };
+
+  const handleUploadSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (uploadQueue.length === 0) {
+      setUploadError('Please select at least one file to upload.');
+      return;
+    }
+
+    const hasInvalidFiles = uploadQueue.some((i) => Boolean(i.error));
+    if (hasInvalidFiles) {
+      setUploadError('Please remove or correct files with validation errors before uploading.');
+      return;
+    }
 
     setIsUploading(true);
-    setUploadProgress(25);
+    setUploadError(null);
+    setUploadSuccess(null);
+    setUploadProgress(15);
 
-    setTimeout(() => {
-      setUploadProgress(70);
+    try {
+      if (isRealBackend) {
+        // Real Mode: upload with multipart/form-data to /files/
+        const total = uploadQueue.length;
+        for (let idx = 0; idx < total; idx++) {
+          const item = uploadQueue[idx];
+          const formData = new FormData();
+          formData.append('file', item.file, item.name);
+          if (activeChannelId) {
+            formData.append('channelId', activeChannelId);
+          }
+
+          const res = await apiClient.files.upload(formData);
+          if (res) {
+            uploadWorkspaceFile({
+              name: res.name || item.name,
+              type: (res.type as WorkspaceFile['type']) || item.type,
+              size: res.size || item.size,
+              sizeBytes: res.sizeBytes || item.sizeBytes,
+              url: res.url || URL.createObjectURL(item.file),
+              uploadedBy: currentUser.id,
+            });
+          }
+          setUploadProgress(Math.round(((idx + 1) / total) * 100));
+        }
+      } else {
+        // Demo Mode: store selected file in the browser (object URL kept for session)
+        const total = uploadQueue.length;
+        for (let idx = 0; idx < total; idx++) {
+          const item = uploadQueue[idx];
+          // Retain live object URL for downloading / previewing real file
+          const objectUrl = item.previewUrl || URL.createObjectURL(item.file);
+
+          uploadWorkspaceFile({
+            name: item.name,
+            type: item.type,
+            size: item.size,
+            sizeBytes: item.sizeBytes,
+            url: objectUrl,
+            uploadedBy: currentUser.id,
+          });
+          setUploadProgress(Math.round(((idx + 1) / total) * 100));
+        }
+      }
+
+      setUploadSuccess(`Successfully uploaded ${uploadQueue.length} file(s)!`);
       setTimeout(() => {
-        setUploadProgress(100);
-        uploadWorkspaceFile({
-          name: fileName.trim(),
-          type: fileType,
-          size: fileSizeText,
-          sizeBytes: 1500000,
-          url: 'https://assets.collabflow.internal/files/' + fileName.trim(),
-          uploadedBy: currentUser.id,
-        });
         setIsUploading(false);
         setIsUploadModalOpen(false);
-        setFileName('');
+        setUploadQueue([]);
         setUploadProgress(0);
-      }, 400);
-    }, 500);
+        setUploadSuccess(null);
+      }, 700);
+    } catch (err: any) {
+      setIsUploading(false);
+      setUploadError(err?.message || 'Failed to complete file upload.');
+    }
   };
 
   const getFileIcon = (type: WorkspaceFile['type']) => {
@@ -79,6 +240,8 @@ export const FilesView: React.FC = () => {
         return <Code2 className="w-5 h-5 text-cyan-400" />;
       case 'media':
         return <Video className="w-5 h-5 text-pink-400" />;
+      case 'archive':
+        return <FolderGit2 className="w-5 h-5 text-amber-400" />;
       default:
         return <FileText className="w-5 h-5 text-indigo-400" />;
     }
@@ -99,8 +262,13 @@ export const FilesView: React.FC = () => {
         </div>
 
         <button
-          onClick={() => setIsUploadModalOpen(true)}
-          className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all hover:scale-[1.02] self-start sm:self-auto"
+          onClick={() => {
+            setUploadQueue([]);
+            setUploadError(null);
+            setUploadSuccess(null);
+            setIsUploadModalOpen(true);
+          }}
+          className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all hover:scale-[1.02] self-start sm:self-auto cursor-pointer"
         >
           <Upload className="w-4 h-4" />
           <span>Upload File</span>
@@ -195,8 +363,9 @@ export const FilesView: React.FC = () => {
 
                   <div>
                     <h3
-                      className="text-xs sm:text-sm font-bold text-slate-200 group-hover:text-indigo-300 transition-colors line-clamp-1"
+                      className="text-xs sm:text-sm font-bold text-slate-200 group-hover:text-indigo-300 transition-colors line-clamp-1 cursor-pointer"
                       title={file.name}
+                      onClick={() => setPreviewFile(file)}
                     >
                       {file.name}
                     </h3>
@@ -215,7 +384,7 @@ export const FilesView: React.FC = () => {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setPreviewFile(file)}
-                      className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                      className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
                       title="Preview details"
                     >
                       <Eye className="w-4 h-4" />
@@ -223,14 +392,15 @@ export const FilesView: React.FC = () => {
 
                     <button
                       onClick={() => {
-                        // Download simulation
                         const a = document.createElement('a');
                         a.href = file.url;
                         a.download = file.name;
                         a.target = '_blank';
+                        document.body.appendChild(a);
                         a.click();
+                        document.body.removeChild(a);
                       }}
-                      className="p-1.5 text-slate-400 hover:text-emerald-400 rounded-lg hover:bg-slate-800 transition-colors"
+                      className="p-1.5 text-slate-400 hover:text-emerald-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
                       title="Download"
                     >
                       <Download className="w-4 h-4" />
@@ -238,7 +408,7 @@ export const FilesView: React.FC = () => {
 
                     <button
                       onClick={() => deleteWorkspaceFile(file.id)}
-                      className="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors"
+                      className="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
                       title="Delete"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -254,91 +424,225 @@ export const FilesView: React.FC = () => {
       {/* UPLOAD MODAL */}
       {isUploadModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-6 space-y-4 text-xs">
+          <div className="w-full max-w-xl rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-6 space-y-4 text-xs max-h-[90vh] flex flex-col">
+            {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <Upload className="w-4 h-4 text-indigo-400" />
                 <span>Upload to Workspace</span>
               </h2>
               <button
-                onClick={() => setIsUploadModalOpen(false)}
-                className="text-slate-400 hover:text-white text-sm"
+                type="button"
+                onClick={() => {
+                  if (!isUploading) setIsUploadModalOpen(false);
+                }}
+                className="text-slate-400 hover:text-white text-sm cursor-pointer p-1"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleUploadSubmit} className="space-y-3.5">
-              <div>
-                <label className="block text-slate-300 font-semibold mb-1">File Name *</label>
+            {/* Demo Mode Notice */}
+            {!isRealBackend && (
+              <div className="px-3 py-2 rounded-xl bg-indigo-950/40 border border-indigo-500/30 text-[11px] text-indigo-300 flex items-center justify-between gap-2">
+                <span>ℹ Demo mode: uploads are kept in this browser session and preview/download will open the real files.</span>
+                <span className="font-mono text-[10px] text-indigo-400 shrink-0">Local Session</span>
+              </div>
+            )}
+
+            {/* Error / Success Banners */}
+            {uploadError && (
+              <div className="px-3 py-2 rounded-xl bg-rose-950/50 border border-rose-500/40 text-[11px] text-rose-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{uploadError}</span>
+              </div>
+            )}
+            {uploadSuccess && (
+              <div className="px-3 py-2 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-[11px] text-emerald-300 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{uploadSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleUploadSubmit} className="flex-1 flex flex-col min-h-0 space-y-4">
+              {/* Native file picker + Drag & Drop zone */}
+              <div
+                onDragOver={handleDragOver}
+                onDragEnter={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-2.5 ${
+                  isDragging
+                    ? 'border-indigo-400 bg-indigo-950/30 ring-2 ring-indigo-500/30'
+                    : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 hover:bg-slate-950'
+                }`}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <div className="w-12 h-12 rounded-2xl bg-indigo-950/60 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-inner">
+                  <Upload className="w-6 h-6" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-200">
+                    <span className="text-indigo-400 font-bold hover:underline">Choose files</span> or drag and drop here
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    PDF, Office, Images, Media, Code, Archives (Max 50 MB per file)
+                  </p>
+                </div>
+
                 <input
-                  type="text"
-                  required
-                  value={fileName}
-                  onChange={(e) => setFileName(e.target.value)}
-                  placeholder="e.g. Mediasoup_SFU_Signaling_Spec.pdf"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-hidden focus:border-indigo-500"
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      handleFilesAdded(e.target.files);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="hidden"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Category</label>
-                  <select
-                    value={fileType}
-                    onChange={(e) => setFileType(e.target.value as any)}
-                    className="w-full px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-white"
-                  >
-                    <option value="document">Document (PDF / Office)</option>
-                    <option value="image">Image (PNG / SVG)</option>
-                    <option value="code">Code / Config</option>
-                    <option value="media">Video / Audio</option>
-                  </select>
-                </div>
+              {/* Selected Files Preview List */}
+              {uploadQueue.length > 0 && (
+                <div className="flex-1 min-h-0 flex flex-col space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                    <span>
+                      Selected Files ({uploadQueue.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setUploadQueue([])}
+                      className="text-[11px] text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                    >
+                      Clear All
+                    </button>
+                  </div>
 
-                <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Size</label>
-                  <input
-                    type="text"
-                    value={fileSizeText}
-                    onChange={(e) => setFileSizeText(e.target.value)}
-                    placeholder="e.g. 2.4 MB"
-                    className="w-full px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-white"
-                  />
-                </div>
-              </div>
+                  <div className="overflow-y-auto max-h-52 space-y-2 pr-1">
+                    {uploadQueue.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                          item.error
+                            ? 'bg-rose-950/20 border-rose-800/60'
+                            : 'bg-slate-950 border-slate-800'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          {item.previewUrl ? (
+                            <img
+                              src={item.previewUrl}
+                              alt={item.name}
+                              className="w-10 h-10 rounded-lg object-cover border border-slate-800 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center shrink-0">
+                              {getFileIcon(item.type)}
+                            </div>
+                          )}
 
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <input
+                              type="text"
+                              value={item.name}
+                              onChange={(e) => updateItemName(item.id, e.target.value)}
+                              placeholder="File name"
+                              className="w-full px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-indigo-500 font-medium"
+                            />
+                            <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                              <span>{item.size}</span>
+                              <span>•</span>
+                              <span className="uppercase font-mono">{item.type}</span>
+                            </div>
+                            {item.error && (
+                              <p className="text-[10px] text-rose-400 font-medium flex items-center gap-1">
+                                <AlertCircle className="w-3 h-3 shrink-0" />
+                                <span>{item.error}</span>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                          <select
+                            value={item.type}
+                            onChange={(e) =>
+                              updateItemType(item.id, e.target.value as WorkspaceFile['type'])
+                            }
+                            className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
+                          >
+                            <option value="document">Document</option>
+                            <option value="image">Image</option>
+                            <option value="code">Code</option>
+                            <option value="media">Media</option>
+                            <option value="archive">Archive</option>
+                          </select>
+
+                          <button
+                            type="button"
+                            onClick={() => removeQueueItem(item.id)}
+                            className="p-1 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                            title="Remove file"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Progress State */}
               {isUploading && (
-                <div className="space-y-1 pt-2">
+                <div className="space-y-1.5 pt-1">
                   <div className="flex justify-between text-[11px] text-indigo-300">
-                    <span>Uploading file...</span>
+                    <span>Uploading files...</span>
                     <span>{uploadProgress}%</span>
                   </div>
-                  <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                  <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
                     <div
-                      className="h-full bg-indigo-500 transition-all duration-200"
+                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-200"
                       style={{ width: `${uploadProgress}%` }}
                     />
                   </div>
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
-                <button
-                  type="button"
-                  disabled={isUploading}
-                  onClick={() => setIsUploadModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isUploading}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-all shadow-md shadow-indigo-600/30"
-                >
-                  {isUploading ? 'Uploading...' : 'Confirm Upload'}
-                </button>
+              {/* Footer Buttons */}
+              <div className="flex items-center justify-between pt-3 border-t border-slate-800 mt-auto">
+                <span className="text-[11px] text-slate-500">
+                  Max file size: 50 MB
+                </span>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isUploading}
+                    onClick={() => setIsUploadModalOpen(false)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      isUploading ||
+                      uploadQueue.length === 0 ||
+                      uploadQueue.some((i) => Boolean(i.error))
+                    }
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold transition-all shadow-md shadow-indigo-600/30 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>
+                      {isUploading
+                        ? 'Uploading...'
+                        : `Confirm Upload (${uploadQueue.filter((i) => !i.error).length})`}
+                    </span>
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -352,17 +656,35 @@ export const FilesView: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 {getFileIcon(previewFile.type)}
-                <span>{previewFile.name}</span>
+                <span className="truncate max-w-sm">{previewFile.name}</span>
               </h2>
               <button
                 onClick={() => setPreviewFile(null)}
-                className="text-slate-400 hover:text-white text-sm"
+                className="text-slate-400 hover:text-white text-sm cursor-pointer p-1"
               >
                 ✕
               </button>
             </div>
 
+            {/* Thumbnail preview for image files */}
+            {previewFile.type === 'image' && (
+              <div className="max-h-60 overflow-hidden rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center p-2">
+                <img
+                  src={previewFile.url}
+                  alt={previewFile.name}
+                  className="max-h-56 max-w-full object-contain rounded-lg"
+                />
+              </div>
+            )}
+
             <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+              <p className="text-slate-300">
+                <strong className="text-white">File Name:</strong> {previewFile.name}
+              </p>
+              <p className="text-slate-300">
+                <strong className="text-white">Category:</strong>{' '}
+                <span className="uppercase font-mono text-indigo-300">{previewFile.type}</span>
+              </p>
               <p className="text-slate-300">
                 <strong className="text-white">File Size:</strong> {previewFile.size}
               </p>
@@ -370,17 +692,48 @@ export const FilesView: React.FC = () => {
                 <strong className="text-white">Uploaded Date:</strong> {previewFile.uploadedAt}
               </p>
               <p className="text-slate-300">
-                <strong className="text-white">Direct URL:</strong>{' '}
+                <strong className="text-white">Direct URL / Blob:</strong>{' '}
                 <span className="font-mono text-indigo-400 break-all">{previewFile.url}</span>
               </p>
+              {!isRealBackend && (
+                <p className="text-amber-400/90 text-[11px] flex items-center gap-1.5 pt-1">
+                  <span>ℹ Demo uploads stay in this browser only.</span>
+                </p>
+              )}
             </div>
 
-            <div className="flex justify-end pt-2">
+            <div className="flex justify-end gap-2 pt-2">
+              <a
+                href={previewFile.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold flex items-center gap-1.5"
+              >
+                <Eye className="w-4 h-4" />
+                <span>Open Real File</span>
+              </a>
+
+              <button
+                onClick={() => {
+                  const a = document.createElement('a');
+                  a.href = previewFile.url;
+                  a.download = previewFile.name;
+                  a.target = '_blank';
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                }}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download</span>
+              </button>
+
               <button
                 onClick={() => setPreviewFile(null)}
-                className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold"
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold cursor-pointer"
               >
-                Close Preview
+                Close
               </button>
             </div>
           </div>

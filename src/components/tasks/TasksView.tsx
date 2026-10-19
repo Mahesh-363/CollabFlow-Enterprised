@@ -19,6 +19,7 @@ import { useCollabStore } from '../../store/useCollabStore';
 import { UserAvatar } from '../UserAvatar';
 import { Task, TaskStatus, TaskPriority } from '../../types/collab';
 import { filterTasks, calculateTaskMetrics } from '../../utils/collabSuiteLogic';
+import { getRelativeDateStr } from '../../utils/dateClock';
 
 export const TasksView: React.FC = () => {
   const {
@@ -42,7 +43,7 @@ export const TasksView: React.FC = () => {
   const [formDesc, setFormDesc] = useState('');
   const [formPriority, setFormPriority] = useState<TaskPriority>('medium');
   const [formAssigneeId, setFormAssigneeId] = useState(currentUser.id);
-  const [formDueDate, setFormDueDate] = useState('2026-10-20');
+  const [formDueDate, setFormDueDate] = useState(() => getRelativeDateStr(4));
   const [formTags, setFormTags] = useState('Frontend, A11y');
   const [formSubtasksText, setFormSubtasksText] = useState('Task Item 1\nTask Item 2');
 

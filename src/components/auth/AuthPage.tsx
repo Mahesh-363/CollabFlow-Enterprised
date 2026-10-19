@@ -204,7 +204,7 @@ export const AuthPage: React.FC = () => {
 
     setIsLoading(true);
     setTimeout(async () => {
-      await loginWithEmail(email, password);
+      await loginWithEmail(email, password, rememberMe);
       setIsLoading(false);
     }, 600);
   };
@@ -244,7 +244,7 @@ export const AuthPage: React.FC = () => {
     setIsLoading(true);
     const phoneCheck = validatePhoneNumber(selectedCountry.dialCode, phoneNumber);
     setTimeout(async () => {
-      await loginWithPhone(phoneCheck.e164, otpCode);
+      await loginWithPhone(phoneCheck.e164, otpCode, rememberMe);
       setIsLoading(false);
     }, 600);
   };
@@ -254,7 +254,7 @@ export const AuthPage: React.FC = () => {
     setIsLoading(true);
     setIsMicrosoftModalOpen(false);
     setTimeout(async () => {
-      await loginWithMicrosoft(msAccountType);
+      await loginWithMicrosoft(msAccountType, undefined, rememberMe);
       setIsLoading(false);
     }, 700);
   };
@@ -264,7 +264,7 @@ export const AuthPage: React.FC = () => {
     setIsLoading(true);
     setIsAppleModalOpen(false);
     setTimeout(async () => {
-      await loginWithApple({ hideEmail: appleHideEmail });
+      await loginWithApple({ hideEmail: appleHideEmail, rememberMe });
       setIsLoading(false);
     }, 700);
   };
@@ -285,7 +285,7 @@ export const AuthPage: React.FC = () => {
       : targetEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
     setTimeout(async () => {
-      await loginWithGmail({ email: targetEmail, name: targetName });
+      await loginWithGmail({ email: targetEmail, name: targetName, rememberMe });
       setIsLoading(false);
     }, 500);
   };
@@ -321,6 +321,7 @@ export const AuthPage: React.FC = () => {
         email: signupEmail,
         password: signupPassword,
         workspaceName: signupWorkspace,
+        rememberMe,
       });
       setIsLoading(false);
       if (!res.success) {
@@ -364,7 +365,8 @@ export const AuthPage: React.FC = () => {
             slug: workspaceSlug || workspaceName.toLowerCase().replace(/\s+/g, '-'),
             useCase,
             teamSize,
-          }
+          },
+          rememberMe
         );
         setIsLoading(false);
       }, 800);
@@ -476,7 +478,7 @@ export const AuthPage: React.FC = () => {
       </header>
 
       {/* MAIN SPLIT-SCREEN VIEWPORT */}
-      <main className="relative z-10 flex-1 grid grid-cols-1 lg:grid-cols-12 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-10 gap-8 items-center">
+      <main className="relative z-10 flex-1 grid grid-cols-1 lg:grid-cols-12 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-10 pb-12 sm:pb-16 gap-8 items-start lg:items-center">
         {/* ======================================================== */}
         {/* LEFT-SIDE BRAND & PRODUCT SHOWCASE */}
         {/* ======================================================== */}
@@ -501,7 +503,7 @@ export const AuthPage: React.FC = () => {
 
           {/* INTERACTIVE 3D EXPERIENCE SHOWCASE (HI WALL & WALL-E) */}
           <div className="space-y-2.5 max-w-xl">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="inline-flex items-center p-1 bg-slate-900/90 border border-slate-800 rounded-xl shadow-inner">
                 <button
                   type="button"
@@ -1060,7 +1062,7 @@ export const AuthPage: React.FC = () => {
                         <button
                           key={u.id}
                           type="button"
-                          onClick={() => loginAsPersona(u.id)}
+                          onClick={() => loginAsPersona(u.id, rememberMe)}
                           className="flex items-center gap-2 p-2 rounded-lg bg-slate-950/70 hover:bg-slate-900 border border-slate-800 hover:border-indigo-600/50 transition-colors text-left"
                         >
                           <span className="w-5 h-5 rounded bg-slate-800 text-[10px] font-bold text-slate-300 flex items-center justify-center">
