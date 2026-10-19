@@ -41,6 +41,8 @@ import {
   calculateThreadMetrics,
   canDeleteMessage,
   canEditMessage,
+  canCreateChannel,
+  validateChannelName,
 } from '../utils/collabLogic';
 import {
   issueJWTSession,
@@ -208,7 +210,12 @@ interface CollabState {
   closeThread: () => void;
   sendThreadReply: (messageId: string, content: string) => void;
   toggleThreadReaction: (replyId: string, emoji: string) => void;
-  createChannel: (name: string, description: string, topic: string, isPrivate: boolean) => void;
+  createChannel: (
+    name: string,
+    description: string,
+    topic: string,
+    isPrivate: boolean
+  ) => Promise<{ success: boolean; error?: string; channel?: Channel }>;
   switchCurrentUser: (userId: string) => void;
   updateUserPresence: (presence: UserPresence, customStatus?: string) => void;
   recordUserActivity: () => void;
@@ -1321,13 +1328,22 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     });
   },
 
-  createChannel: (name: string, description: string, topic: string, isPrivate: boolean) => {
-    const { currentUser, activeWorkspaceId, channels } = get();
-    const cleanName = name.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  createChannel: async (name: string, description: string, topic: string, isPrivate: boolean) => {
+    const { currentUser, activeWorkspaceId, channels, activeChannelId, activeNav, isBackendConnected } = get();
+
+    if (!canCreateChannel(currentUser)) {
+      return { success: false, error: 'Guest accounts do not have permission to create channels.' };
+    }
+
+    const validation = validateChannelName(name, channels, activeWorkspaceId);
+    if (!validation.isValid) {
+      return { success: false, error: validation.error };
+    }
+
     const newChan: Channel = {
       id: `ch-${Date.now()}`,
       workspaceId: activeWorkspaceId,
-      name: cleanName,
+      name: validation.cleanName,
       description,
       topic,
       isPrivate,
@@ -1337,11 +1353,54 @@ export const useCollabStore = create<CollabState>((set, get) => ({
       createdAt: new Date().toISOString(),
     };
 
+    const previousChannels = channels;
+    const previousActiveChannelId = activeChannelId;
+    const previousActiveNav = activeNav;
+
+    // Optimistically update store: channel immediately appears in sidebar, is selected, and navigates to chat
     set({
       channels: [...channels, newChan],
       activeChannelId: newChan.id,
+      activeNav: 'chat',
       isCreateChannelOpen: false,
     });
+
+    if (isBackendConnected) {
+      try {
+        const payload = {
+          workspace_id: activeWorkspaceId,
+          name: validation.cleanName,
+          description,
+          topic,
+          is_private: isPrivate,
+          isPrivate,
+        };
+        const res = await apiClient.chat.createChannel(payload);
+        if (res && res.id) {
+          const serverId = String(res.id);
+          set((state) => ({
+            channels: state.channels.map((c) => (c.id === newChan.id ? { ...c, id: serverId } : c)),
+            activeChannelId: state.activeChannelId === newChan.id ? serverId : state.activeChannelId,
+          }));
+        }
+        return { success: true, channel: newChan };
+      } catch (err: any) {
+        // Rollback optimistic update on server error
+        set({
+          channels: previousChannels,
+          activeChannelId: previousActiveChannelId,
+          activeNav: previousActiveNav,
+        });
+        const errorMsg =
+          err?.response?.data?.detail ||
+          err?.response?.data?.name?.[0] ||
+          err?.message ||
+          'Failed to create channel on server.';
+        return { success: false, error: errorMsg };
+      }
+    }
+
+    return { success: true, channel: newChan };
   },
 
   switchCurrentUser: (userId: string) => {

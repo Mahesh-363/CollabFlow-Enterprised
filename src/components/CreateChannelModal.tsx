@@ -1,38 +1,79 @@
 import React, { useState } from 'react';
 import { Hash, Lock, X, AlertCircle } from 'lucide-react';
 import { useCollabStore } from '../store/useCollabStore';
-import { canCreateChannel } from '../utils/collabLogic';
+import { canCreateChannel, validateChannelName } from '../utils/collabLogic';
 
 export const CreateChannelModal: React.FC = () => {
-  const { isCreateChannelOpen, setCreateChannelOpen, createChannel, currentUser } = useCollabStore();
+  const {
+    isCreateChannelOpen,
+    setCreateChannelOpen,
+    createChannel,
+    currentUser,
+    channels,
+    activeWorkspaceId,
+  } = useCollabStore();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [topic, setTopic] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isCreateChannelOpen) return null;
 
   const hasPermission = canCreateChannel(currentUser);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!hasPermission) {
-      setError('Guest accounts do not have permission to create channels.');
-      return;
-    }
-    const cleanName = name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-    if (!cleanName) {
-      setError('Channel name is required.');
-      return;
-    }
-
-    createChannel(cleanName, description.trim(), topic.trim(), isPrivate);
+  const handleClose = () => {
     setName('');
     setDescription('');
     setTopic('');
     setIsPrivate(false);
     setError('');
+    setIsSubmitting(false);
+    setCreateChannelOpen(false);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!hasPermission) {
+      setError('Guest accounts do not have permission to create channels.');
+      return;
+    }
+
+    const validation = validateChannelName(name, channels, activeWorkspaceId);
+    if (!validation.isValid) {
+      setError(validation.error || 'Invalid channel name.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      const result = await createChannel(
+        validation.cleanName,
+        description.trim(),
+        topic.trim(),
+        isPrivate
+      );
+
+      if (result && !result.success) {
+        setError(result.error || 'Failed to create channel.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      setName('');
+      setDescription('');
+      setTopic('');
+      setIsPrivate(false);
+      setError('');
+      setIsSubmitting(false);
+      setCreateChannelOpen(false);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to create channel.');
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -47,7 +88,7 @@ export const CreateChannelModal: React.FC = () => {
             <h3 className="font-bold text-base text-slate-100">Create a channel</h3>
           </div>
           <button
-            onClick={() => setCreateChannelOpen(false)}
+            onClick={handleClose}
             className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
           >
             <X className="w-4 h-4" />
@@ -80,7 +121,10 @@ export const CreateChannelModal: React.FC = () => {
               <input
                 type="text"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (error) setError('');
+                }}
                 placeholder="e.g. data-pipeline-alerts"
                 className="w-full pl-8 pr-3 py-2 text-sm bg-slate-950 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                 required
@@ -145,21 +189,21 @@ export const CreateChannelModal: React.FC = () => {
           <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={() => setCreateChannelOpen(false)}
+              onClick={handleClose}
               className="px-4 py-2 text-xs font-medium text-slate-300 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={!hasPermission || !name.trim()}
+              disabled={!hasPermission || !name.trim() || isSubmitting}
               className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
-                hasPermission && name.trim()
+                hasPermission && name.trim() && !isSubmitting
                   ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30'
                   : 'bg-slate-800 text-slate-500 cursor-not-allowed'
               }`}
             >
-              Create Channel
+              {isSubmitting ? 'Creating...' : 'Create Channel'}
             </button>
           </div>
         </form>
