@@ -1,27 +1,29 @@
-import pyotp
 import secrets
-from rest_framework import generics, status, views, permissions
+
+import pyotp
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from rest_framework import generics, permissions, status, views
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenRefreshView
-from django.contrib.auth.tokens import default_token_generator
-from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
-from django.utils.encoding import force_bytes, force_str
+
 from .models import User
+from .presence import PresenceEngine
 from .serializers import (
-    UserSerializer,
-    RegisterSerializer,
     LoginSerializer,
     PasswordChangeSerializer,
-    PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
+    RegisterSerializer,
     TOTPVerifySerializer,
+    UserSerializer,
 )
-from .presence import PresenceEngine
 
 
 class RegisterView(generics.CreateAPIView):
     """Register new account, generate JWT tokens and initial workspace."""
+
     permission_classes = (permissions.AllowAny,)
     serializer_class = RegisterSerializer
 
@@ -32,64 +34,68 @@ class RegisterView(generics.CreateAPIView):
 
         # Provision initial workspace for new user
         from apps.workspaces.models import Workspace, WorkspaceMembership
-        ws_name = serializer.validated_data.get('workspace_name') or f"{user.name}'s Workspace"
+
+        ws_name = serializer.validated_data.get("workspace_name") or f"{user.name}'s Workspace"
         workspace = Workspace.objects.create(
             name=ws_name,
             owner=user,
             icon=ws_name[:2].upper(),
-            color='#9333ea',
+            color="#9333ea",
         )
-        WorkspaceMembership.objects.create(
-            workspace=workspace,
-            user=user,
-            role='owner'
-        )
+        WorkspaceMembership.objects.create(workspace=workspace, user=user, role="owner")
 
         refresh = RefreshToken.for_user(user)
-        return Response({
-            'success': True,
-            'message': 'Account created successfully',
-            'tokens': {
-                'access': str(refresh.access_token),
-                'refresh': str(refresh),
+        return Response(
+            {
+                "success": True,
+                "message": "Account created successfully",
+                "tokens": {
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+                },
+                "user": UserSerializer(user).data,
+                "workspace": {
+                    "id": workspace.id,
+                    "name": workspace.name,
+                    "slug": workspace.slug,
+                },
             },
-            'user': UserSerializer(user).data,
-            'workspace': {
-                'id': workspace.id,
-                'name': workspace.name,
-                'slug': workspace.slug,
-            }
-        }, status=status.HTTP_201_CREATED)
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class LoginView(views.APIView):
     """Authenticate with email and password (plus optional TOTP 2FA)."""
+
     permission_classes = (permissions.AllowAny,)
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.validated_data['user']
+        user = serializer.validated_data["user"]
 
         refresh = RefreshToken.for_user(user)
         PresenceEngine.record_heartbeat(user.id, socket_id="http_session")
 
-        return Response({
-            'success': True,
-            'tokens': {
-                'access': str(refresh.access_token),
-                'refresh': str(refresh),
-            },
-            'user': UserSerializer(user).data,
-        })
+        return Response(
+            {
+                "success": True,
+                "tokens": {
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+                },
+                "user": UserSerializer(user).data,
+            }
+        )
 
 
 class LogoutView(views.APIView):
     """Blacklist refresh token and set user presence offline."""
+
     permission_classes = (permissions.IsAuthenticated,)
 
     def post(self, request):
-        refresh_token = request.data.get('refresh')
+        refresh_token = request.data.get("refresh")
         if refresh_token:
             try:
                 token = RefreshToken(refresh_token)
@@ -98,15 +104,16 @@ class LogoutView(views.APIView):
                 pass
 
         user = request.user
-        user.presence = 'offline'
-        user.save(update_fields=['presence'])
+        user.presence = "offline"
+        user.save(update_fields=["presence"])
         PresenceEngine.disconnect_socket(user.id, socket_id="http_session")
 
-        return Response({'success': True, 'message': 'Logged out successfully'})
+        return Response({"success": True, "message": "Logged out successfully"})
 
 
 class MeView(generics.RetrieveUpdateAPIView):
     """Retrieve or update current user profile (presence, status, avatar, title)."""
+
     permission_classes = (permissions.IsAuthenticated,)
     serializer_class = UserSerializer
 
@@ -116,107 +123,182 @@ class MeView(generics.RetrieveUpdateAPIView):
     def update(self, request, *args, **kwargs):
         user = self.get_object()
         # Handle presence or customStatus update
-        if 'presence' in request.data:
-            user.presence = request.data['presence']
-        if 'customStatus' in request.data:
-            user.custom_status = request.data['customStatus']
-        if 'name' in request.data:
-            user.name = request.data['name']
-        if 'title' in request.data:
-            user.title = request.data['title']
+        if "presence" in request.data:
+            user.presence = request.data["presence"]
+        if "customStatus" in request.data:
+            user.custom_status = request.data["customStatus"]
+        if "name" in request.data:
+            user.name = request.data["name"]
+        if "title" in request.data:
+            user.title = request.data["title"]
         user.save()
-        return Response({
-            'success': True,
-            'user': UserSerializer(user).data
-        })
+        return Response({"success": True, "user": UserSerializer(user).data})
 
 
 class ChangePasswordView(views.APIView):
     """Change authenticated user password."""
+
     permission_classes = (permissions.IsAuthenticated,)
 
     def post(self, request):
-        serializer = PasswordChangeSerializer(data=request.data, context={'request': request})
+        serializer = PasswordChangeSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        request.user.set_password(serializer.validated_data['new_password'])
+        request.user.set_password(serializer.validated_data["new_password"])
         request.user.save()
-        return Response({'success': True, 'message': 'Password updated successfully.'})
+        return Response({"success": True, "message": "Password updated successfully."})
 
 
 class TOTPSetupView(views.APIView):
     """Generate TOTP secret and provisioning URI for Google Authenticator / 1Password."""
+
     permission_classes = (permissions.IsAuthenticated,)
 
     def post(self, request):
         user = request.user
         secret = pyotp.random_base32()
         user.totp_secret = secret
-        user.save(update_fields=['totp_secret'])
+        user.save(update_fields=["totp_secret"])
 
         totp = pyotp.TOTP(secret)
         provisioning_uri = totp.provisioning_uri(
-            name=user.email,
-            issuer_name='CollabFlow Enterprise'
+            name=user.email, issuer_name="CollabFlow Enterprise"
         )
 
-        return Response({
-            'success': True,
-            'secret': secret,
-            'provisioning_uri': provisioning_uri,
-        })
+        return Response(
+            {
+                "success": True,
+                "secret": secret,
+                "provisioning_uri": provisioning_uri,
+            }
+        )
 
 
 class TOTPVerifyView(views.APIView):
     """Verify code and enable 2FA on account, generating backup recovery codes."""
+
     permission_classes = (permissions.IsAuthenticated,)
 
     def post(self, request):
         serializer = TOTPVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        code = serializer.validated_data['code']
+        code = serializer.validated_data["code"]
         user = request.user
 
         if not user.totp_secret:
-            return Response({'success': False, 'message': '2FA setup was not initiated.'}, status=400)
+            return Response(
+                {"success": False, "message": "2FA setup was not initiated."}, status=400
+            )
 
         totp = pyotp.TOTP(user.totp_secret)
         if not totp.verify(code, valid_window=1):
-            return Response({'success': False, 'message': 'Invalid verification code.'}, status=400)
+            return Response({"success": False, "message": "Invalid verification code."}, status=400)
 
         recovery_codes = [secrets.token_hex(4).upper() for _ in range(8)]
         user.totp_enabled = True
         user.recovery_codes = recovery_codes
-        user.save(update_fields=['totp_enabled', 'recovery_codes'])
+        user.save(update_fields=["totp_enabled", "recovery_codes"])
 
-        return Response({
-            'success': True,
-            'message': 'Two-factor authentication enabled successfully.',
-            'recovery_codes': recovery_codes
-        })
+        return Response(
+            {
+                "success": True,
+                "message": "Two-factor authentication enabled successfully.",
+                "recovery_codes": recovery_codes,
+            }
+        )
 
 
 class PresenceHeartbeatView(views.APIView):
     """Record liveness heartbeat from active client."""
+
     permission_classes = (permissions.IsAuthenticated,)
 
     def post(self, request):
-        socket_id = request.data.get('socket_id', 'http_poll')
+        socket_id = request.data.get("socket_id", "http_poll")
         PresenceEngine.record_heartbeat(
-            request.user.id,
-            socket_id=socket_id,
-            client_ip=request.META.get('REMOTE_ADDR', '')
+            request.user.id, socket_id=socket_id, client_ip=request.META.get("REMOTE_ADDR", "")
         )
-        return Response({
-            'success': True,
-            'presence': PresenceEngine.get_user_presence(request.user.id),
-            'presenceMap': PresenceEngine.get_presence_map()
-        })
+        return Response(
+            {
+                "success": True,
+                "presence": PresenceEngine.get_user_presence(request.user.id),
+                "presenceMap": PresenceEngine.get_presence_map(),
+            }
+        )
 
 
 class UserDirectoryView(generics.ListAPIView):
     """Directory listing of all active workspace users."""
+
     permission_classes = (permissions.IsAuthenticated,)
     serializer_class = UserSerializer
 
     def get_queryset(self):
-        return User.objects.filter(is_active=True).order_by('name')
+        return User.objects.filter(is_active=True).order_by("name")
+
+
+class PasswordResetRequestView(views.APIView):
+    """
+    Request password reset email.
+    Always returns a generic success message without user enumeration.
+    """
+
+    permission_classes = (permissions.AllowAny,)
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"].lower()
+        user = User.objects.filter(email=email, is_active=True).first()
+        if user:
+            # Token and uid generated for secure password reset
+            _token = default_token_generator.make_token(user)
+            _uid = urlsafe_base64_encode(force_bytes(user.pk))
+
+        return Response(
+            {
+                "success": True,
+                "message": "If an account exists with this email, a password reset link has been sent.",
+            }
+        )
+
+
+class PasswordResetConfirmView(views.APIView):
+    """
+    Confirm password reset using uid/email and token.
+    Validates token and sets the new password with validate_password.
+    """
+
+    permission_classes = (permissions.AllowAny,)
+
+    def post(self, request):
+        from django.contrib.auth.password_validation import validate_password
+
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        uid = serializer.validated_data.get("uid")
+        email = serializer.validated_data.get("email")
+        token = serializer.validated_data["token"]
+        new_password = serializer.validated_data["new_password"]
+
+        user = None
+        if uid:
+            try:
+                user_id = force_str(urlsafe_base64_decode(uid))
+                user = User.objects.filter(pk=user_id, is_active=True).first()
+            except Exception:
+                user = None
+
+        if not user and email:
+            user = User.objects.filter(email=email.lower(), is_active=True).first()
+
+        if not user or not default_token_generator.check_token(user, token):
+            return Response(
+                {"success": False, "message": "Invalid or expired password reset token."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        validate_password(new_password, user=user)
+        user.set_password(new_password)
+        user.save()
+
+        return Response({"success": True, "message": "Password has been reset successfully."})

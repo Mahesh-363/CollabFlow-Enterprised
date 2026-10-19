@@ -1,1 +1,1 @@
-default_app_config = 'apps.meetings.apps.MeetingsConfig'
+default_app_config = "apps.meetings.apps.MeetingsConfig"

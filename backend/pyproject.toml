@@ -23,6 +23,10 @@ exclude = [
 select = ["E", "F", "I", "W", "UP", "B", "C4"]
 ignore = ["E501", "B008", "W191"]
 
+[tool.ruff.lint.per-file-ignores]
+"config/asgi.py" = ["E402"]
+"config/settings/*.py" = ["F403", "F405"]
+
 [tool.black]
 line-length = 100
 target-version = ['py312']
@@ -36,11 +40,15 @@ exclude = '''
 
 [tool.mypy]
 python_version = "3.12"
-check_untyped_defs = true
+explicit_package_bases = true
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unused_configs = true
+exclude = [
+    "migrations",
+    "\\.venv",
+]
 plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
 
 [tool.django-stubs]

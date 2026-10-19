@@ -1,8 +1,27 @@
+import secrets
 import uuid
+
 from django.db import models
-from django.utils.text import slugify
 from django.utils import timezone
+from django.utils.text import slugify
+
 from apps.accounts.models import User
+
+
+def generate_workspace_id() -> str:
+    return f"ws-{uuid.uuid4().hex[:8]}"
+
+
+def generate_membership_id() -> str:
+    return f"mem-{uuid.uuid4().hex[:8]}"
+
+
+def generate_invite_id() -> str:
+    return f"inv-{uuid.uuid4().hex[:8]}"
+
+
+def generate_invite_code() -> str:
+    return f"CF-{secrets.token_hex(4).upper()}"
 
 
 class Workspace(models.Model):
@@ -10,18 +29,19 @@ class Workspace(models.Model):
     Workspace model matching TypeScript `Workspace`:
     { id, name, slug, icon, color, ownerId, memberCount, channels }
     """
-    id = models.CharField(max_length=64, primary_key=True, default=lambda: f"ws-{uuid.uuid4().hex[:8]}")
+
+    id = models.CharField(max_length=64, primary_key=True, default=generate_workspace_id)
     name = models.CharField(max_length=150)
     slug = models.SlugField(max_length=150, unique=True)
-    icon = models.CharField(max_length=20, default='CF')
-    color = models.CharField(max_length=30, default='#9333ea')
-    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='owned_workspaces')
+    icon = models.CharField(max_length=20, default="CF")
+    color = models.CharField(max_length=30, default="#9333ea")
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="owned_workspaces")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'collab_workspaces'
-        ordering = ['name']
+        db_table = "collab_workspaces"
+        ordering = ["name"]
 
     def __str__(self):
         return f"{self.name} ({self.slug})"
@@ -48,22 +68,23 @@ class Workspace(models.Model):
 
 class WorkspaceMembership(models.Model):
     """User membership and assigned role inside a specific workspace."""
+
     ROLE_CHOICES = (
-        ('owner', 'Owner'),
-        ('admin', 'Admin'),
-        ('member', 'Member'),
-        ('guest', 'Guest'),
+        ("owner", "Owner"),
+        ("admin", "Admin"),
+        ("member", "Member"),
+        ("guest", "Guest"),
     )
 
-    id = models.CharField(max_length=64, primary_key=True, default=lambda: f"mem-{uuid.uuid4().hex[:8]}")
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='memberships')
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='workspace_memberships')
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='member')
+    id = models.CharField(max_length=64, primary_key=True, default=generate_membership_id)
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="memberships")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="workspace_memberships")
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="member")
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'collab_workspace_memberships'
-        unique_together = ('workspace', 'user')
+        db_table = "collab_workspace_memberships"
+        unique_together = ("workspace", "user")
 
     def __str__(self):
         return f"{self.user.name} in {self.workspace.name} as {self.role}"
@@ -71,10 +92,13 @@ class WorkspaceMembership(models.Model):
 
 class WorkspaceInvite(models.Model):
     """Shareable invitation links with expiration and usage count."""
-    id = models.CharField(max_length=64, primary_key=True, default=lambda: f"inv-{uuid.uuid4().hex[:8]}")
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='invites')
-    code = models.CharField(max_length=64, unique=True, default=lambda: f"CF-{secrets.token_hex(4).upper()}")
-    role = models.CharField(max_length=20, choices=WorkspaceMembership.ROLE_CHOICES, default='member')
+
+    id = models.CharField(max_length=64, primary_key=True, default=generate_invite_id)
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="invites")
+    code = models.CharField(max_length=64, unique=True, default=generate_invite_code)
+    role = models.CharField(
+        max_length=20, choices=WorkspaceMembership.ROLE_CHOICES, default="member"
+    )
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     expires_at = models.DateTimeField()
     max_uses = models.PositiveIntegerField(default=100)
@@ -82,7 +106,7 @@ class WorkspaceInvite(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'collab_workspace_invites'
+        db_table = "collab_workspace_invites"
 
     def is_valid(self):
         return self.used_count < self.max_uses and self.expires_at > timezone.now()

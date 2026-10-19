@@ -1,9 +1,8 @@
 import pyotp
-import secrets
-from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework import serializers
+
 from .models import User
 
 
@@ -12,26 +11,27 @@ class UserSerializer(serializers.ModelSerializer):
     Serializes User model exactly matching TypeScript `User`:
     { id, name, email, avatar, title, role, presence, customStatus, isBot }
     """
-    customStatus = serializers.CharField(source='custom_status', required=False, allow_blank=True)
-    isBot = serializers.BooleanField(source='is_bot', required=False)
-    avatarUrl = serializers.URLField(source='avatar_url', required=False, allow_null=True)
+
+    customStatus = serializers.CharField(source="custom_status", required=False, allow_blank=True)
+    isBot = serializers.BooleanField(source="is_bot", required=False)
+    avatarUrl = serializers.URLField(source="avatar_url", required=False, allow_null=True)
 
     class Meta:
         model = User
         fields = (
-            'id',
-            'name',
-            'email',
-            'avatar',
-            'avatarUrl',
-            'title',
-            'role',
-            'presence',
-            'customStatus',
-            'isBot',
-            'totp_enabled',
+            "id",
+            "name",
+            "email",
+            "avatar",
+            "avatarUrl",
+            "title",
+            "role",
+            "presence",
+            "customStatus",
+            "isBot",
+            "totp_enabled",
         )
-        read_only_fields = ('id', 'role', 'isBot', 'totp_enabled')
+        read_only_fields = ("id", "role", "isBot", "totp_enabled")
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -46,21 +46,21 @@ class RegisterSerializer(serializers.Serializer):
         return value.lower()
 
     def create(self, validated_data):
-        name = validated_data['name']
-        email = validated_data['email']
-        password = validated_data['password']
+        name = validated_data["name"]
+        email = validated_data["email"]
+        password = validated_data["password"]
 
         # Generate avatar initials
-        initials = ''.join([part[0].upper() for part in name.strip().split() if part])[:2] or 'U'
+        initials = "".join([part[0].upper() for part in name.strip().split() if part])[:2] or "U"
 
         user = User.objects.create_user(
             email=email,
             password=password,
             name=name,
             avatar=initials,
-            title='Staff Member',
-            role='member',
-            presence='online',
+            title="Staff Member",
+            role="member",
+            presence="online",
         )
         return user
 
@@ -71,9 +71,9 @@ class LoginSerializer(serializers.Serializer):
     totp_code = serializers.CharField(required=False, allow_blank=True, max_length=10)
 
     def validate(self, attrs):
-        email = attrs.get('email', '').lower()
-        password = attrs.get('password')
-        totp_code = attrs.get('totp_code')
+        email = attrs.get("email", "").lower()
+        password = attrs.get("password")
+        totp_code = attrs.get("totp_code")
 
         user = authenticate(username=email, password=password)
         if not user:
@@ -84,10 +84,12 @@ class LoginSerializer(serializers.Serializer):
         # Check 2FA if enabled
         if user.totp_enabled:
             if not totp_code:
-                raise serializers.ValidationError({
-                    'code': '2fa_required',
-                    'message': 'Two-factor authentication code is required for this account.'
-                })
+                raise serializers.ValidationError(
+                    {
+                        "code": "2fa_required",
+                        "message": "Two-factor authentication code is required for this account.",
+                    }
+                )
             totp = pyotp.TOTP(user.totp_secret)
             is_valid_totp = totp.verify(totp_code, valid_window=1)
             is_recovery = totp_code in (user.recovery_codes or [])
@@ -95,9 +97,9 @@ class LoginSerializer(serializers.Serializer):
                 raise serializers.ValidationError("Invalid two-factor authentication code.")
             if is_recovery:
                 user.recovery_codes.remove(totp_code)
-                user.save(update_fields=['recovery_codes'])
+                user.save(update_fields=["recovery_codes"])
 
-        attrs['user'] = user
+        attrs["user"] = user
         return attrs
 
 
@@ -106,7 +108,7 @@ class PasswordChangeSerializer(serializers.Serializer):
     new_password = serializers.CharField(write_only=True, validators=[validate_password])
 
     def validate_old_password(self, value):
-        user = self.context['request'].user
+        user = self.context["request"].user
         if not user.check_password(value):
             raise serializers.ValidationError("Current password does not match.")
         return value
@@ -117,9 +119,21 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    uid = serializers.CharField(required=False, allow_blank=True)
+    email = serializers.EmailField(required=False)
     token = serializers.CharField()
-    new_password = serializers.CharField(write_only=True, validators=[validate_password])
+    new_password = serializers.CharField(required=False, write_only=True)
+    password = serializers.CharField(required=False, write_only=True)
+
+    def validate(self, attrs):
+        if not attrs.get("uid") and not attrs.get("email"):
+            raise serializers.ValidationError("Either 'uid' or 'email' is required.")
+        pwd = attrs.get("new_password") or attrs.get("password")
+        if not pwd:
+            raise serializers.ValidationError("Password is required.")
+        validate_password(pwd)
+        attrs["new_password"] = pwd
+        return attrs
 
 
 class TOTPVerifySerializer(serializers.Serializer):

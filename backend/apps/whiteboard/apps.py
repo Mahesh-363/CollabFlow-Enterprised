@@ -2,6 +2,6 @@ from django.apps import AppConfig
 
 
 class WhiteboardConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'apps.whiteboard'
-    verbose_name = 'Collaborative Whiteboard'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.whiteboard"
+    verbose_name = "Collaborative Whiteboard"

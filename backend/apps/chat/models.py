@@ -1,8 +1,34 @@
 import uuid
+
 from django.db import models
 from django.utils import timezone
+
 from apps.accounts.models import User
 from apps.workspaces.models import Workspace
+
+
+def generate_channel_id() -> str:
+    return f"chan-{uuid.uuid4().hex[:8]}"
+
+
+def generate_conversation_id() -> str:
+    return f"dm-{uuid.uuid4().hex[:8]}"
+
+
+def generate_message_id() -> str:
+    return f"msg-{uuid.uuid4().hex[:8]}"
+
+
+def generate_thread_reply_id() -> str:
+    return f"tr-{uuid.uuid4().hex[:8]}"
+
+
+def generate_reaction_id() -> str:
+    return f"rx-{uuid.uuid4().hex[:8]}"
+
+
+def generate_scheduled_message_id() -> str:
+    return f"sch-{uuid.uuid4().hex[:8]}"
 
 
 class Channel(models.Model):
@@ -10,21 +36,24 @@ class Channel(models.Model):
     Channel model matching TypeScript `Channel`:
     { id, workspaceId, name, description, topic, isPrivate, memberIds, unreadCount, createdById, createdAt }
     """
-    id = models.CharField(max_length=64, primary_key=True, default=lambda: f"chan-{uuid.uuid4().hex[:8]}")
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='channels')
+
+    id = models.CharField(max_length=64, primary_key=True, default=generate_channel_id)
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="channels")
     name = models.CharField(max_length=100)
-    description = models.TextField(blank=True, default='')
-    topic = models.CharField(max_length=255, blank=True, default='')
+    description = models.TextField(blank=True, default="")
+    topic = models.CharField(max_length=255, blank=True, default="")
     is_private = models.BooleanField(default=False)
-    members = models.ManyToManyField(User, related_name='channels', blank=True)
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_channels')
+    members = models.ManyToManyField(User, related_name="channels", blank=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, related_name="created_channels"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'collab_channels'
-        unique_together = ('workspace', 'name')
-        ordering = ['name']
+        db_table = "collab_channels"
+        unique_together = ("workspace", "name")
+        ordering = ["name"]
 
     def __str__(self):
         return f"#{self.name} ({self.workspace.name})"
@@ -39,7 +68,7 @@ class Channel(models.Model):
 
     @property
     def createdById(self):
-        return self.created_by_id or ''
+        return self.created_by_id or ""
 
     @property
     def createdAt(self):
@@ -47,7 +76,7 @@ class Channel(models.Model):
 
     @property
     def memberIds(self):
-        return list(self.members.values_list('id', flat=True))
+        return list(self.members.values_list("id", flat=True))
 
 
 class Conversation(models.Model):
@@ -55,14 +84,17 @@ class Conversation(models.Model):
     Direct message conversation matching TypeScript `DirectMessageConversation`:
     { id, workspaceId, participantIds, unreadCount, lastMessage, lastMessageTime }
     """
-    id = models.CharField(max_length=64, primary_key=True, default=lambda: f"dm-{uuid.uuid4().hex[:8]}")
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='dm_conversations')
-    participants = models.ManyToManyField(User, related_name='dm_conversations')
+
+    id = models.CharField(max_length=64, primary_key=True, default=generate_conversation_id)
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="dm_conversations"
+    )
+    participants = models.ManyToManyField(User, related_name="dm_conversations")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'collab_dm_conversations'
+        db_table = "collab_dm_conversations"
 
     def __str__(self):
         return f"DM Conversation {self.id}"
@@ -73,7 +105,7 @@ class Conversation(models.Model):
 
     @property
     def participantIds(self):
-        return list(self.participants.values_list('id', flat=True))
+        return list(self.participants.values_list("id", flat=True))
 
 
 class Message(models.Model):
@@ -81,10 +113,15 @@ class Message(models.Model):
     Message model matching TypeScript `Message`:
     { id, channelId, userId, content, createdAt, updatedAt, isEdited, isDeleted, reactions, replyCount, lastReplyAt, threadParticipantIds, attachments, pinned }
     """
-    id = models.CharField(max_length=64, primary_key=True, default=lambda: f"msg-{uuid.uuid4().hex[:8]}")
-    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, null=True, blank=True, related_name='messages')
-    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, null=True, blank=True, related_name='messages')
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='messages')
+
+    id = models.CharField(max_length=64, primary_key=True, default=generate_message_id)
+    channel = models.ForeignKey(
+        Channel, on_delete=models.CASCADE, null=True, blank=True, related_name="messages"
+    )
+    conversation = models.ForeignKey(
+        Conversation, on_delete=models.CASCADE, null=True, blank=True, related_name="messages"
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="messages")
     content = models.TextField()
     is_edited = models.BooleanField(default=False)
     is_deleted = models.BooleanField(default=False)
@@ -94,8 +131,8 @@ class Message(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'collab_messages'
-        ordering = ['created_at']
+        db_table = "collab_messages"
+        ordering = ["created_at"]
 
     def __str__(self):
         target = f"#{self.channel.name}" if self.channel else f"DM {self.conversation_id}"
@@ -103,7 +140,7 @@ class Message(models.Model):
 
     @property
     def channelId(self):
-        return self.channel_id or (self.conversation_id if self.conversation_id else '')
+        return self.channel_id or (self.conversation_id if self.conversation_id else "")
 
     @property
     def userId(self):
@@ -127,12 +164,12 @@ class Message(models.Model):
 
     @property
     def lastReplyAt(self):
-        last_reply = self.thread_replies.order_by('-created_at').first()
+        last_reply = self.thread_replies.order_by("-created_at").first()
         return last_reply.created_at.isoformat() if last_reply else None
 
     @property
     def threadParticipantIds(self):
-        return list(self.thread_replies.values_list('user_id', flat=True).distinct())
+        return list(self.thread_replies.values_list("user_id", flat=True).distinct())
 
 
 class ThreadReply(models.Model):
@@ -140,17 +177,18 @@ class ThreadReply(models.Model):
     Thread reply matching TypeScript `ThreadReply`:
     { id, messageId, userId, content, createdAt, updatedAt, isEdited, reactions }
     """
-    id = models.CharField(max_length=64, primary_key=True, default=lambda: f"tr-{uuid.uuid4().hex[:8]}")
-    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name='thread_replies')
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='thread_replies')
+
+    id = models.CharField(max_length=64, primary_key=True, default=generate_thread_reply_id)
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="thread_replies")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="thread_replies")
     content = models.TextField()
     is_edited = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'collab_thread_replies'
-        ordering = ['created_at']
+        db_table = "collab_thread_replies"
+        ordering = ["created_at"]
 
     @property
     def messageId(self):
@@ -171,16 +209,21 @@ class ThreadReply(models.Model):
 
 class Reaction(models.Model):
     """Emoji reaction attached to a message or thread reply."""
-    id = models.CharField(max_length=64, primary_key=True, default=lambda: f"rx-{uuid.uuid4().hex[:8]}")
-    message = models.ForeignKey(Message, on_delete=models.CASCADE, null=True, blank=True, related_name='reactions')
-    thread_reply = models.ForeignKey(ThreadReply, on_delete=models.CASCADE, null=True, blank=True, related_name='reactions')
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reactions')
+
+    id = models.CharField(max_length=64, primary_key=True, default=generate_reaction_id)
+    message = models.ForeignKey(
+        Message, on_delete=models.CASCADE, null=True, blank=True, related_name="reactions"
+    )
+    thread_reply = models.ForeignKey(
+        ThreadReply, on_delete=models.CASCADE, null=True, blank=True, related_name="reactions"
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="reactions")
     emoji = models.CharField(max_length=32)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'collab_reactions'
-        unique_together = ('message', 'user', 'emoji')
+        db_table = "collab_reactions"
+        unique_together = ("message", "user", "emoji")
 
     def __str__(self):
         return f"{self.user.name} reacted {self.emoji}"
@@ -188,19 +231,21 @@ class Reaction(models.Model):
 
 class ChannelReadReceipt(models.Model):
     """Tracks last read message per channel for accurate unread counts."""
-    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name='read_receipts')
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='channel_read_receipts')
+
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="read_receipts")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="channel_read_receipts")
     last_read_message = models.ForeignKey(Message, on_delete=models.SET_NULL, null=True, blank=True)
     last_read_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        db_table = 'collab_channel_read_receipts'
-        unique_together = ('channel', 'user')
+        db_table = "collab_channel_read_receipts"
+        unique_together = ("channel", "user")
 
 
 class ScheduledMessage(models.Model):
     """Scheduled message to be dispatched at a future timestamp."""
-    id = models.CharField(max_length=64, primary_key=True, default=lambda: f"sch-{uuid.uuid4().hex[:8]}")
+
+    id = models.CharField(max_length=64, primary_key=True, default=generate_scheduled_message_id)
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, null=True, blank=True)
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, null=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -210,14 +255,15 @@ class ScheduledMessage(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'collab_scheduled_messages'
+        db_table = "collab_scheduled_messages"
 
 
 class IdempotencyRecord(models.Model):
     """Prevents duplicate message creation on network retry."""
+
     key = models.CharField(max_length=128, primary_key=True)
     message = models.ForeignKey(Message, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'collab_idempotency_records'
+        db_table = "collab_idempotency_records"

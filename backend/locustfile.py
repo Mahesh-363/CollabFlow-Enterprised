@@ -1,6 +1,6 @@
-import json
 import time
-from locust import HttpUser, task, between
+
+from locust import HttpUser, between, task
 
 
 class CollabFlowUser(HttpUser):
@@ -8,17 +8,18 @@ class CollabFlowUser(HttpUser):
     Locust load testing benchmark for CollabFlow API and WebSocket interactions.
     Simulates user login, token refresh, message fetch, task browsing, and chat sends.
     """
+
     wait_time = between(1, 3)
 
     def on_start(self):
         """Authenticate user and obtain JWT tokens."""
-        response = self.client.post("/api/v1/accounts/login/", json={
-            "email": "elena.vance@acme.corp",
-            "password": "CollabFlow#2026!"
-        })
+        response = self.client.post(
+            "/api/v1/accounts/login/",
+            json={"email": "elena.vance@acme.corp", "password": "CollabFlow#2026!"},
+        )
         if response.status_code == 200:
             data = response.json()
-            self.access_token = data['tokens']['access']
+            self.access_token = data["tokens"]["access"]
             self.headers = {"Authorization": f"Bearer {self.access_token}"}
         else:
             self.headers = {}
@@ -30,10 +31,12 @@ class CollabFlowUser(HttpUser):
             return
         res = self.client.get("/api/v1/chat/channels/", headers=self.headers)
         if res.status_code == 200:
-            channels = res.json().get('results', []) or res.json()
+            channels = res.json().get("results", []) or res.json()
             if isinstance(channels, list) and channels:
-                chan_id = channels[0]['id']
-                self.client.get(f"/api/v1/chat/channels/{chan_id}/messages/?limit=25", headers=self.headers)
+                chan_id = channels[0]["id"]
+                self.client.get(
+                    f"/api/v1/chat/channels/{chan_id}/messages/?limit=25", headers=self.headers
+                )
 
     @task(2)
     def send_chat_message(self):
@@ -45,8 +48,8 @@ class CollabFlowUser(HttpUser):
             headers=self.headers,
             json={
                 "content": f"Load benchmark ping at {time.time()}",
-                "idempotency_key": f"locust-{time.time()}"
-            }
+                "idempotency_key": f"locust-{time.time()}",
+            },
         )
 
     @task(2)
@@ -57,7 +60,7 @@ class CollabFlowUser(HttpUser):
         self.client.post(
             "/api/v1/accounts/heartbeat/",
             headers=self.headers,
-            json={"socket_id": "locust_virtual_socket"}
+            json={"socket_id": "locust_virtual_socket"},
         )
 
     @task(1)
