@@ -8,7 +8,7 @@
  * Never stores raw passwords.
  */
 
-import type { User } from '../types/collab.ts';
+import type { User, Channel } from '../types/collab.ts';
 
 export interface PersistedAuthSession {
   provider: 'microsoft' | 'apple' | 'google' | 'email' | 'phone' | 'demo';
@@ -28,6 +28,8 @@ export interface PersistedSessionData {
   expiresAt: number;
   activeWorkspaceId?: string;
   activeChannelId?: string;
+  activeNav?: string;
+  channels?: Channel[];
 }
 
 export const SESSION_STORAGE_KEY = 'collabflow_auth_session';
@@ -43,6 +45,8 @@ export function savePersistedSession(
     authSession: PersistedAuthSession;
     activeWorkspaceId?: string;
     activeChannelId?: string;
+    activeNav?: string;
+    channels?: Channel[];
   },
   rememberMe: boolean = true
 ): void {
@@ -58,6 +62,8 @@ export function savePersistedSession(
     expiresAt,
     activeWorkspaceId: data.activeWorkspaceId,
     activeChannelId: data.activeChannelId,
+    activeNav: data.activeNav,
+    channels: data.channels,
   };
 
   try {

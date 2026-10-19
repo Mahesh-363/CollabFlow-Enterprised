@@ -56,6 +56,7 @@ import {
   savePersistedSession,
   getPersistedSession,
   clearPersistedSession,
+  type PersistedSessionData,
 } from '../utils/authSessionStorage';
 
 export type AppTheme = 'slack' | 'teams' | 'midnight' | 'light';
@@ -242,13 +243,38 @@ interface CollabState {
   setHelpModalOpen: (open: boolean) => void;
 }
 
+const initialPersisted = typeof window !== 'undefined' ? getPersistedSession() : null;
+
+export function saveCurrentSessionSnapshot(partial: Partial<PersistedSessionData>) {
+  if (typeof window === 'undefined') return;
+  const persisted = getPersistedSession();
+  const state = useCollabStore.getState();
+  const user = persisted?.user || state.currentUser;
+  const authSession = persisted?.authSession || state.authSession;
+  const rememberMe = persisted?.rememberMe ?? true;
+
+  savePersistedSession(
+    {
+      user,
+      authSession,
+      activeWorkspaceId: partial.activeWorkspaceId ?? persisted?.activeWorkspaceId ?? state.activeWorkspaceId,
+      activeChannelId: partial.activeChannelId ?? persisted?.activeChannelId ?? state.activeChannelId,
+      activeNav: partial.activeNav ?? persisted?.activeNav ?? state.activeNav,
+      channels: partial.channels ?? persisted?.channels ?? state.channels,
+    },
+    rememberMe
+  );
+}
+
 export const useCollabStore = create<CollabState>((set, get) => ({
   users: INITIAL_USERS,
-  currentUser: INITIAL_USERS[0], // Elena Vance (Owner)
+  currentUser: initialPersisted?.user || INITIAL_USERS[0], // Elena Vance (Owner)
   workspaces: INITIAL_WORKSPACES,
-  activeWorkspaceId: INITIAL_WORKSPACES[0].id,
-  channels: INITIAL_CHANNELS,
-  activeChannelId: INITIAL_CHANNELS[1].id, // #engineering-core
+  activeWorkspaceId: initialPersisted?.activeWorkspaceId || INITIAL_WORKSPACES[0].id,
+  channels: (initialPersisted?.channels && initialPersisted.channels.length > 0)
+    ? initialPersisted.channels
+    : INITIAL_CHANNELS,
+  activeChannelId: initialPersisted?.activeChannelId || INITIAL_CHANNELS[1].id, // #engineering-core
   directMessages: INITIAL_DMS,
   messages: INITIAL_MESSAGES,
   threadReplies: INITIAL_THREAD_REPLIES,
@@ -276,9 +302,11 @@ export const useCollabStore = create<CollabState>((set, get) => ({
 
   // Authentication & Onboarding initial state
   isRestoringSession: typeof window !== 'undefined',
-  isAuthenticated: typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('autostart') === '1',
-  isAuthView: !(typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('autostart') === '1'),
-  authSession: {
+  isAuthenticated: (typeof window !== 'undefined' && Boolean(initialPersisted)) ||
+    (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('autostart') === '1'),
+  isAuthView: !(typeof window !== 'undefined' && Boolean(initialPersisted)) &&
+    !(typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('autostart') === '1'),
+  authSession: initialPersisted?.authSession || {
     provider: 'demo',
     accessToken: 'cf_jwt_access_init_sample',
     refreshToken: 'cf_jwt_refresh_init_sample',
@@ -305,7 +333,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
   isGameOpen: false,
 
   // Navigation & Suite Initial State
-  activeNav: 'home',
+  activeNav: (initialPersisted?.activeNav as NavSection) || 'home',
   calendarEvents: INITIAL_CALENDAR_EVENTS,
   meetings: INITIAL_MEETINGS,
   tasks: INITIAL_TASKS,
@@ -461,12 +489,25 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         persisted.rememberMe
       );
 
+      const restoredNav = (persisted.activeNav as NavSection) || 'chat';
+      const restoredChannels =
+        persisted.channels && persisted.channels.length > 0
+          ? persisted.channels
+          : INITIAL_CHANNELS;
+      const restoredChannelId =
+        persisted.activeChannelId ||
+        (restoredChannels.find((c) => c.workspaceId === (persisted.activeWorkspaceId || get().activeWorkspaceId))?.id ||
+          restoredChannels[0]?.id ||
+          get().activeChannelId);
+
       set((state) => ({
         users: updatedUsers,
         currentUser: restoredUser,
         authSession: persisted.authSession,
         activeWorkspaceId: persisted.activeWorkspaceId || state.activeWorkspaceId,
-        activeChannelId: persisted.activeChannelId || state.activeChannelId,
+        activeChannelId: restoredChannelId,
+        activeNav: restoredNav,
+        channels: restoredChannels,
         isAuthenticated: true,
         isAuthView: false,
         isRestoringSession: false,
@@ -505,12 +546,19 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         refreshToken: currentRefresh,
       };
 
+      const restoredNav = (persisted.activeNav as NavSection) || get().activeNav;
+      const restoredChannels =
+        persisted.channels && persisted.channels.length > 0 ? persisted.channels : get().channels;
+      const restoredChannelId = persisted.activeChannelId || get().activeChannelId;
+
       savePersistedSession(
         {
           user: validatedUser,
           authSession: updatedAuthSession,
           activeWorkspaceId: persisted.activeWorkspaceId || get().activeWorkspaceId,
-          activeChannelId: persisted.activeChannelId || get().activeChannelId,
+          activeChannelId: restoredChannelId,
+          activeNav: restoredNav,
+          channels: restoredChannels,
         },
         persisted.rememberMe
       );
@@ -521,7 +569,9 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         backendConnected: true,
         backendLatencyMs: health.latencyMs,
         activeWorkspaceId: persisted.activeWorkspaceId || state.activeWorkspaceId,
-        activeChannelId: persisted.activeChannelId || state.activeChannelId,
+        activeChannelId: restoredChannelId,
+        activeNav: restoredNav,
+        channels: restoredChannels,
         isAuthenticated: true,
         isAuthView: false,
         isRestoringSession: false,
@@ -1130,6 +1180,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     // Clear unread count on current channel
     set((state) => ({
       activeChannelId: channelId,
+      activeNav: 'chat',
       channels: state.channels.map((ch) =>
         ch.id === channelId ? { ...ch, unreadCount: 0 } : ch
       ),
@@ -1137,10 +1188,17 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         dm.id === channelId ? { ...dm, unreadCount: 0 } : dm
       ),
     }));
+    saveCurrentSessionSnapshot({
+      activeChannelId: channelId,
+      activeNav: 'chat',
+    });
   },
 
   setActiveWorkspace: (workspaceId: string) => {
     set({ activeWorkspaceId: workspaceId });
+    saveCurrentSessionSnapshot({
+      activeWorkspaceId: workspaceId,
+    });
   },
 
   sendMessage: (channelId: string, content: string, attachments?: FileAttachment[]) => {
@@ -1357,12 +1415,21 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     const previousActiveChannelId = activeChannelId;
     const previousActiveNav = activeNav;
 
-    // Optimistically update store: channel immediately appears in sidebar, is selected, and navigates to chat
+    // Place newly created channel at the TOP of the channels list (directly below Acme Corp / CHANNELS header)
+    const updatedChannels = [newChan, ...channels];
+
+    // Optimistically update store: channel immediately appears at the top of the sidebar, is selected, and navigates to chat
     set({
-      channels: [...channels, newChan],
+      channels: updatedChannels,
       activeChannelId: newChan.id,
       activeNav: 'chat',
       isCreateChannelOpen: false,
+    });
+
+    saveCurrentSessionSnapshot({
+      channels: updatedChannels,
+      activeChannelId: newChan.id,
+      activeNav: 'chat',
     });
 
     if (isBackendConnected) {
@@ -1378,15 +1445,31 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         const res = await apiClient.chat.createChannel(payload);
         if (res && res.id) {
           const serverId = String(res.id);
-          set((state) => ({
-            channels: state.channels.map((c) => (c.id === newChan.id ? { ...c, id: serverId } : c)),
-            activeChannelId: state.activeChannelId === newChan.id ? serverId : state.activeChannelId,
-          }));
+          set((state) => {
+            const serverChannels = state.channels.map((c) =>
+              c.id === newChan.id ? { ...c, id: serverId } : c
+            );
+            const serverActiveId =
+              state.activeChannelId === newChan.id ? serverId : state.activeChannelId;
+            saveCurrentSessionSnapshot({
+              channels: serverChannels,
+              activeChannelId: serverActiveId,
+            });
+            return {
+              channels: serverChannels,
+              activeChannelId: serverActiveId,
+            };
+          });
         }
         return { success: true, channel: newChan };
       } catch (err: any) {
         // Rollback optimistic update on server error
         set({
+          channels: previousChannels,
+          activeChannelId: previousActiveChannelId,
+          activeNav: previousActiveNav,
+        });
+        saveCurrentSessionSnapshot({
           channels: previousChannels,
           activeChannelId: previousActiveChannelId,
           activeNav: previousActiveNav,
@@ -1623,6 +1706,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
 
   setActiveNav: (nav: NavSection) => {
     set({ activeNav: nav });
+    saveCurrentSessionSnapshot({ activeNav: nav });
   },
 
   setQuickCreateOpen: (open: boolean) => {
@@ -1716,6 +1800,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
       isInMeetingRoom: true,
       activeNav: 'meetings',
     }));
+    saveCurrentSessionSnapshot({ activeNav: 'meetings' });
     soundEffects.playJoinChime();
     return newMeeting;
   },
@@ -1728,6 +1813,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
       isInMeetingRoom: true,
       activeNav: 'meetings',
     });
+    saveCurrentSessionSnapshot({ activeNav: 'meetings' });
     soundEffects.playJoinChime();
   },
 

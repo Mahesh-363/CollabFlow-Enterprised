@@ -307,8 +307,8 @@ test('channel creation handles optimistic update and rollback on failure', async
       createdAt: new Date().toISOString(),
     };
 
-    // Optimistic update
-    channels = [...channels, newChan];
+    // Optimistic update: new channel placed at the top
+    channels = [newChan, ...channels];
     activeChannelId = newChan.id;
 
     if (shouldFail) {
@@ -325,6 +325,7 @@ test('channel creation handles optimistic update and rollback on failure', async
   const okResult = await simulateCreate(false);
   assert.equal(okResult.success, true);
   assert.equal(channels.length, 2);
+  assert.equal(channels[0].id, 'c-optimistic');
   assert.equal(activeChannelId, 'c-optimistic');
 
   // Reset
