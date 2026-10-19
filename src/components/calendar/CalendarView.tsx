@@ -20,6 +20,7 @@ import { useCollabStore } from '../../store/useCollabStore';
 import { UserAvatar } from '../UserAvatar';
 import { CalendarEvent } from '../../types/collab';
 import { detectCalendarConflicts } from '../../utils/collabSuiteLogic';
+import { getTodayDateStr } from '../../utils/dateClock';
 
 export const CalendarView: React.FC = () => {
   const {
@@ -33,7 +34,8 @@ export const CalendarView: React.FC = () => {
   } = useCollabStore();
 
   const [currentView, setCurrentView] = useState<'month' | 'week' | 'day' | 'agenda'>('month');
-  const [selectedDate, setSelectedDate] = useState('2026-10-16');
+  const [viewDate, setViewDate] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState(() => getTodayDateStr());
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -41,7 +43,7 @@ export const CalendarView: React.FC = () => {
   // Form states
   const [formTitle, setFormTitle] = useState('');
   const [formDesc, setFormDesc] = useState('');
-  const [formStartDate, setFormStartDate] = useState('2026-10-16');
+  const [formStartDate, setFormStartDate] = useState(() => getTodayDateStr());
   const [formStartTime, setFormStartTime] = useState('11:00');
   const [formEndTime, setFormEndTime] = useState('12:00');
   const [formAttendees, setFormAttendees] = useState<string[]>([currentUser.id]);
@@ -103,12 +105,21 @@ export const CalendarView: React.FC = () => {
     setFormDesc('');
   };
 
-  // Month days generation for October 2026 (Starts on Thursday Oct 1)
-  const monthDays = Array.from({ length: 31 }, (_, i) => {
+  // Month days generation based on viewDate
+  const viewYear = viewDate.getFullYear();
+  const viewMonth = viewDate.getMonth();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
+  const monthName = viewDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const todayDateStr = getTodayDateStr();
+
+  const monthDays = Array.from({ length: daysInMonth }, (_, i) => {
     const day = i + 1;
-    const dateStr = `2026-10-${day < 10 ? '0' + day : day}`;
+    const dayPad = day < 10 ? '0' + day : String(day);
+    const monthPad = (viewMonth + 1) < 10 ? '0' + (viewMonth + 1) : String(viewMonth + 1);
+    const dateStr = `${viewYear}-${monthPad}-${dayPad}`;
     const dayEvents = filteredEvents.filter((ev) => ev.startDate === dateStr);
-    return { day, dateStr, dayEvents, isToday: dateStr === '2026-10-16' };
+    return { day, dateStr, dayEvents, isToday: dateStr === todayDateStr };
   });
 
   return (
@@ -128,7 +139,10 @@ export const CalendarView: React.FC = () => {
         <div className="flex items-center gap-2.5">
           {/* Today Jump Button */}
           <button
-            onClick={() => setSelectedDate('2026-10-16')}
+            onClick={() => {
+              setViewDate(new Date());
+              setSelectedDate(getTodayDateStr());
+            }}
             className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 text-xs font-semibold text-slate-300 hover:text-white transition-colors"
           >
             Today
@@ -165,9 +179,25 @@ export const CalendarView: React.FC = () => {
             ))}
           </div>
 
-          <span className="text-sm font-bold text-white px-2">
-            October 2026
-          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setViewDate(new Date(viewYear, viewMonth - 1, 1))}
+              className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-white transition-colors"
+              title="Previous Month"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <span className="text-sm font-bold text-white px-2 min-w-[130px] text-center">
+              {monthName}
+            </span>
+            <button
+              onClick={() => setViewDate(new Date(viewYear, viewMonth + 1, 1))}
+              className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-white transition-colors"
+              title="Next Month"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -212,13 +242,12 @@ export const CalendarView: React.FC = () => {
             <span>Sat</span>
           </div>
 
-          {/* Days Grid: Oct 1 2026 is Thursday (4 empty cells before it) */}
+          {/* Days Grid */}
           <div className="grid grid-cols-7 divide-x divide-y divide-slate-800/60 min-h-[500px]">
-            {/* Empty offset days */}
-            <div className="p-2 bg-slate-950/40" />
-            <div className="p-2 bg-slate-950/40" />
-            <div className="p-2 bg-slate-950/40" />
-            <div className="p-2 bg-slate-950/40" />
+            {/* Dynamic empty offset days */}
+            {Array.from({ length: firstDayOfWeek }).map((_, idx) => (
+              <div key={`offset-${idx}`} className="p-2 bg-slate-950/40" />
+            ))}
 
             {monthDays.map((d) => (
               <div

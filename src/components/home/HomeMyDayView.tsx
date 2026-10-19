@@ -24,6 +24,13 @@ import {
   generateDailyBrief,
   categorizeReminders,
 } from '../../utils/collabSuiteLogic';
+import {
+  useLiveClock,
+  getTodayDateStr,
+  formatGreeting,
+  formatHeaderDate,
+  formatLiveTime,
+} from '../../utils/dateClock';
 
 export const HomeMyDayView: React.FC = () => {
   const {
@@ -45,7 +52,8 @@ export const HomeMyDayView: React.FC = () => {
     setQuickCreateOpen,
   } = useCollabStore();
 
-  const todayStr = '2026-10-16'; // Sync with system mock date
+  const liveClock = useLiveClock(1000);
+  const todayStr = getTodayDateStr(liveClock);
   const todayEvents = calendarEvents.filter((e) => e.startDate === todayStr);
 
   // User tasks
@@ -53,17 +61,23 @@ export const HomeMyDayView: React.FC = () => {
   const myPendingTasks = myTasks.filter((t) => t.status !== 'done');
   const overdueTasks = myTasks.filter((t) => t.status !== 'done' && t.dueDate < todayStr);
 
-  const { overdue: overdueReminders, today: todayReminders } = categorizeReminders(reminders);
+  const { overdue: overdueReminders, today: todayReminders } = categorizeReminders(
+    reminders,
+    liveClock.getTime()
+  );
   const activeReminders = [...overdueReminders, ...todayReminders].filter((r) => !r.completed);
 
   // Daily brief generator
-  const dailyBrief = generateDailyBrief({
-    userName: currentUser.name.split(' ')[0],
-    meetingsTodayCount: todayEvents.length,
-    tasksPendingCount: myPendingTasks.length,
-    overdueTasksCount: overdueTasks.length,
-    unreadMessagesCount: 5,
-  });
+  const dailyBrief = generateDailyBrief(
+    {
+      userName: currentUser.name.split(' ')[0],
+      meetingsTodayCount: todayEvents.length,
+      tasksPendingCount: myPendingTasks.length,
+      overdueTasksCount: overdueTasks.length,
+      unreadMessagesCount: 5,
+    },
+    liveClock
+  );
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-950 p-4 sm:p-6 lg:p-8 space-y-6 text-slate-100">
@@ -71,11 +85,15 @@ export const HomeMyDayView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-800/80">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2">
-            <span>Good morning, {currentUser.name.split(' ')[0]}</span>
+            <span>{formatGreeting(liveClock, currentUser.name.split(' ')[0])}</span>
             <span className="text-xl">✨</span>
           </h1>
-          <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            Friday, October 16, 2026 • Here is your workspace briefing for today
+          <p className="text-xs sm:text-sm text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
+            <span>{formatHeaderDate(liveClock)}</span>
+            <span>•</span>
+            <span className="font-mono text-indigo-400 font-semibold">{formatLiveTime(liveClock)}</span>
+            <span>•</span>
+            <span>Here is your workspace briefing for today</span>
           </p>
         </div>
 
@@ -137,7 +155,9 @@ export const HomeMyDayView: React.FC = () => {
             <CalendarIcon className="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform" />
           </div>
           <div className="text-xl sm:text-2xl font-black text-white">{todayEvents.length}</div>
-          <span className="text-[11px] text-slate-400">Next at 10:00 AM</span>
+          <span className="text-[11px] text-slate-400">
+            {todayEvents.length > 0 ? `Next at ${todayEvents[0].startTime}` : 'No events today'}
+          </span>
         </div>
 
         <div

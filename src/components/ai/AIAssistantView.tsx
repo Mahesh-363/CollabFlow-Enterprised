@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useCollabStore } from '../../store/useCollabStore';
 import { generateDailyBrief } from '../../utils/collabSuiteLogic';
+import { getTodayDateStr, formatHeaderDate } from '../../utils/dateClock';
 
 interface AIChatMessage {
   id: string;
@@ -31,6 +32,8 @@ export const AIAssistantView: React.FC = () => {
     workspaceFiles,
   } = useCollabStore();
 
+  const todayStr = getTodayDateStr();
+
   const [inputPrompt, setInputPrompt] = useState('');
   const [messages, setMessages] = useState<AIChatMessage[]>([
     {
@@ -45,10 +48,11 @@ export const AIAssistantView: React.FC = () => {
   // Daily brief generator
   const dailyBrief = generateDailyBrief({
     userName: currentUser.name.split(' ')[0],
-    meetingsTodayCount: calendarEvents.filter((e) => e.startDate === '2026-10-16').length,
+    meetingsTodayCount: calendarEvents.filter((e) => e.startDate === todayStr).length,
     tasksPendingCount: tasks.filter((t) => t.assigneeId === currentUser.id && t.status !== 'done').length,
-    overdueTasksCount: tasks.filter((t) => t.assigneeId === currentUser.id && t.status !== 'done' && t.dueDate < '2026-10-16').length,
+    overdueTasksCount: tasks.filter((t) => t.assigneeId === currentUser.id && t.status !== 'done' && t.dueDate < todayStr).length,
     unreadMessagesCount: 5,
+    now: new Date(),
   });
 
   const promptChips = [
@@ -142,7 +146,7 @@ export const AIAssistantView: React.FC = () => {
               <Sparkles className="w-3.5 h-3.5" />
               <span>Today's Executive Summary</span>
             </span>
-            <span className="text-[10px] text-slate-400">October 16, 2026</span>
+            <span className="text-[10px] text-slate-400">{formatHeaderDate()}</span>
           </div>
           <p className="text-xs text-slate-200">{dailyBrief.summary}</p>
           <div className="text-[11px] text-indigo-300 font-medium">

@@ -375,10 +375,9 @@ export function formatMessageTime(isoString: string): string {
 /**
  * Format date divider heading (e.g., Today, Yesterday, or October 15, 2026).
  */
-export function formatDateDivider(isoString: string): string {
+export function formatDateDivider(isoString: string, now: Date = new Date()): string {
   try {
     const date = new Date(isoString);
-    const now = new Date();
     const isToday =
       date.getDate() === now.getDate() &&
       date.getMonth() === now.getMonth() &&

@@ -250,7 +250,7 @@ export function generateDailyBrief(params: {
   tasksPendingCount: number;
   overdueTasksCount: number;
   unreadMessagesCount: number;
-}): {
+}, now?: Date): {
   headline: string;
   summary: string;
   focusTip: string;
@@ -258,7 +258,17 @@ export function generateDailyBrief(params: {
   const { userName, meetingsTodayCount, tasksPendingCount, overdueTasksCount, unreadMessagesCount } =
     params;
 
-  let headline = `Good morning, ${userName}!`;
+  let greeting = 'Good morning';
+  if (now) {
+    const hours = now.getHours();
+    if (hours >= 12 && hours < 17) {
+      greeting = 'Good afternoon';
+    } else if (hours >= 17 || hours < 4) {
+      greeting = 'Good evening';
+    }
+  }
+
+  let headline = `${greeting}, ${userName}!`;
   if (overdueTasksCount > 0) {
     headline = `${userName}, you have ${overdueTasksCount} overdue item${overdueTasksCount > 1 ? 's' : ''} requiring attention today.`;
   } else if (meetingsTodayCount > 2) {

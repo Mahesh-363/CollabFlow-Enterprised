@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useCollabStore } from '../../store/useCollabStore';
 import { categorizeReminders } from '../../utils/collabSuiteLogic';
+import { getTodayDateStr } from '../../utils/dateClock';
 
 export const RemindersView: React.FC = () => {
   const {
@@ -31,7 +32,7 @@ export const RemindersView: React.FC = () => {
 
   // Form states
   const [formTitle, setFormTitle] = useState('');
-  const [formDate, setFormDate] = useState('2026-10-16');
+  const [formDate, setFormDate] = useState(() => getTodayDateStr());
   const [formTime, setFormTime] = useState('14:00');
   const [formPriority, setFormPriority] = useState<'low' | 'medium' | 'high'>('high');
   const [formLinkedType, setFormLinkedType] = useState<string>('none');
