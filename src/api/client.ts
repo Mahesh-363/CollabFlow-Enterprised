@@ -45,7 +45,7 @@ class ApiClient {
 
   public getAccessToken(): string | null {
     try {
-      return localStorage.getItem('collabflow_access_token');
+      return localStorage.getItem('collabflow_access_token') || sessionStorage.getItem('collabflow_access_token');
     } catch {
       return null;
     }
@@ -53,17 +53,27 @@ class ApiClient {
 
   public getRefreshToken(): string | null {
     try {
-      return localStorage.getItem('collabflow_refresh_token');
+      return localStorage.getItem('collabflow_refresh_token') || sessionStorage.getItem('collabflow_refresh_token');
     } catch {
       return null;
     }
   }
 
-  public setTokens(access: string, refresh?: string): void {
+  public setTokens(access: string, refresh?: string, rememberMe?: boolean): void {
     try {
-      localStorage.setItem('collabflow_access_token', access);
+      const isRemember =
+        rememberMe !== undefined
+          ? rememberMe
+          : localStorage.getItem('collabflow_remember_device') !== 'false';
+      const primary = isRemember ? localStorage : sessionStorage;
+      const secondary = isRemember ? sessionStorage : localStorage;
+
+      primary.setItem('collabflow_access_token', access);
+      secondary.removeItem('collabflow_access_token');
+
       if (refresh) {
-        localStorage.setItem('collabflow_refresh_token', refresh);
+        primary.setItem('collabflow_refresh_token', refresh);
+        secondary.removeItem('collabflow_refresh_token');
       }
     } catch {
       // Storage unavailable
@@ -74,6 +84,8 @@ class ApiClient {
     try {
       localStorage.removeItem('collabflow_access_token');
       localStorage.removeItem('collabflow_refresh_token');
+      sessionStorage.removeItem('collabflow_access_token');
+      sessionStorage.removeItem('collabflow_refresh_token');
     } catch {
       // Storage unavailable
     }

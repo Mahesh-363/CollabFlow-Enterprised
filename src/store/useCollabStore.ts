@@ -50,6 +50,11 @@ import {
 import { soundEffects } from '../utils/audioChime';
 import { apiClient } from '../api/client';
 import { socketManager } from '../api/socket';
+import {
+  savePersistedSession,
+  getPersistedSession,
+  clearPersistedSession,
+} from '../utils/authSessionStorage';
 
 export type AppTheme = 'slack' | 'teams' | 'midnight' | 'light';
 
@@ -132,6 +137,8 @@ interface CollabState {
   // Authentication & Onboarding State
   isAuthenticated: boolean;
   isAuthView: boolean;
+  isRestoringSession: boolean;
+  restoreSession: () => Promise<void>;
   authSession: AuthSession;
   enterpriseTrial: EnterpriseTrial;
   isAuthInspectorOpen: boolean;
@@ -176,17 +183,18 @@ interface CollabState {
 
   setIsAuthView: (isAuthView: boolean) => void;
   setAuthInspectorOpen: (open: boolean) => void;
-  loginWithEmail: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
-  loginWithGmail: (options?: { email?: string; name?: string; picture?: string }) => Promise<{ success: boolean; error?: string }>;
-  signupWithEmail: (account: { name: string; email: string; password?: string; workspaceName?: string }) => Promise<{ success: boolean; error?: string }>;
-  loginWithMicrosoft: (accountType: 'work_school' | 'personal_outlook', emailOverride?: string) => Promise<{ success: boolean; error?: string }>;
-  loginWithApple: (options: { hideEmail: boolean; email?: string }) => Promise<{ success: boolean; error?: string }>;
-  loginWithPhone: (phoneE164: string, otpCode: string) => Promise<{ success: boolean; error?: string }>;
-  loginAsPersona: (userId: string) => void;
+  loginWithEmail: (email: string, password?: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string }>;
+  loginWithGmail: (options?: { email?: string; name?: string; picture?: string; rememberMe?: boolean }) => Promise<{ success: boolean; error?: string }>;
+  signupWithEmail: (account: { name: string; email: string; password?: string; workspaceName?: string; rememberMe?: boolean }) => Promise<{ success: boolean; error?: string }>;
+  loginWithMicrosoft: (accountType: 'work_school' | 'personal_outlook', emailOverride?: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string }>;
+  loginWithApple: (options: { hideEmail: boolean; email?: string; rememberMe?: boolean }) => Promise<{ success: boolean; error?: string }>;
+  loginWithPhone: (phoneE164: string, otpCode?: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string }>;
+  loginAsPersona: (userId: string, rememberMe?: boolean) => void;
   logout: () => void;
   completeOnboarding: (
     account: { name: string; email: string },
-    workspace: { name: string; slug: string; useCase: string; teamSize: string }
+    workspace: { name: string; slug: string; useCase: string; teamSize: string },
+    rememberMe?: boolean
   ) => void;
   setActiveChannel: (channelId: string) => void;
   setActiveWorkspace: (workspaceId: string) => void;
@@ -260,6 +268,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
   },
 
   // Authentication & Onboarding initial state
+  isRestoringSession: typeof window !== 'undefined',
   isAuthenticated: typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('autostart') === '1',
   isAuthView: !(typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('autostart') === '1'),
   authSession: {
@@ -407,7 +416,174 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     }
   },
 
-  loginWithEmail: async (email: string) => {
+  restoreSession: async () => {
+    if (typeof window === 'undefined') {
+      set({ isRestoringSession: false });
+      return;
+    }
+
+    const persisted = getPersistedSession();
+    if (!persisted) {
+      const isAutostart = new URLSearchParams(window.location.search).get('autostart') === '1';
+      set({
+        isRestoringSession: false,
+        isAuthenticated: isAutostart,
+        isAuthView: !isAutostart,
+      });
+      return;
+    }
+
+    const rawApiUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+
+    // Demo mode: persist and restore the simulated session
+    if (!rawApiUrl) {
+      const { users } = get();
+      const existingUser = users.find(
+        (u) =>
+          u.id === persisted.user.id ||
+          u.email.toLowerCase() === persisted.user.email.toLowerCase()
+      );
+      const restoredUser = existingUser ? { ...existingUser, ...persisted.user } : persisted.user;
+      const updatedUsers = existingUser
+        ? users.map((u) => (u.id === restoredUser.id ? restoredUser : u))
+        : [...users, restoredUser];
+
+      apiClient.setTokens(
+        persisted.authSession.accessToken,
+        persisted.authSession.refreshToken,
+        persisted.rememberMe
+      );
+
+      set((state) => ({
+        users: updatedUsers,
+        currentUser: restoredUser,
+        authSession: persisted.authSession,
+        activeWorkspaceId: persisted.activeWorkspaceId || state.activeWorkspaceId,
+        activeChannelId: persisted.activeChannelId || state.activeChannelId,
+        isAuthenticated: true,
+        isAuthView: false,
+        isRestoringSession: false,
+      }));
+      return;
+    }
+
+    // Real mode (VITE_API_URL set and reachable): restore tokens, validate with /me, refresh on 401, fall back to sign-in only if refresh fails
+    try {
+      const health = await apiClient.checkHealth();
+      if (!health.isHealthy) {
+        set({
+          isRestoringSession: false,
+          isAuthenticated: false,
+          isAuthView: true,
+        });
+        return;
+      }
+
+      apiClient.setTokens(
+        persisted.authSession.accessToken,
+        persisted.authSession.refreshToken,
+        persisted.rememberMe
+      );
+
+      // Validate with /me endpoint (apiClient handles 401 token refresh automatically)
+      const meResponse = await apiClient.auth.me();
+      const validatedUser: User = meResponse?.user || meResponse || persisted.user;
+
+      const currentAccess = apiClient.getAccessToken() || persisted.authSession.accessToken;
+      const currentRefresh = apiClient.getRefreshToken() || persisted.authSession.refreshToken;
+
+      const updatedAuthSession = {
+        ...persisted.authSession,
+        accessToken: currentAccess,
+        refreshToken: currentRefresh,
+      };
+
+      savePersistedSession(
+        {
+          user: validatedUser,
+          authSession: updatedAuthSession,
+          activeWorkspaceId: persisted.activeWorkspaceId || get().activeWorkspaceId,
+          activeChannelId: persisted.activeChannelId || get().activeChannelId,
+        },
+        persisted.rememberMe
+      );
+
+      set((state) => ({
+        currentUser: validatedUser,
+        authSession: updatedAuthSession,
+        backendConnected: true,
+        backendLatencyMs: health.latencyMs,
+        activeWorkspaceId: persisted.activeWorkspaceId || state.activeWorkspaceId,
+        activeChannelId: persisted.activeChannelId || state.activeChannelId,
+        isAuthenticated: true,
+        isAuthView: false,
+        isRestoringSession: false,
+      }));
+
+      get().syncFromBackend();
+    } catch {
+      // Validation or refresh failed -> clear session and fall back to sign in
+      clearPersistedSession();
+      apiClient.clearTokens();
+      set({
+        isAuthenticated: false,
+        isAuthView: true,
+        isRestoringSession: false,
+      });
+    }
+  },
+
+  loginWithEmail: async (email: string, password?: string, rememberMe: boolean = true) => {
+    const rawApiUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+    if (rawApiUrl && get().backendConnected && password) {
+      try {
+        const resp = await apiClient.auth.login({ email: email.trim().toLowerCase(), password });
+        if (resp && (resp.tokens || resp.access)) {
+          const accessToken = resp.tokens?.access || resp.access;
+          const refreshToken = resp.tokens?.refresh || resp.refresh || '';
+          apiClient.setTokens(accessToken, refreshToken, rememberMe);
+          const loggedUser: User = resp.user || {
+            id: `user-${Date.now()}`,
+            name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+            email: email.trim().toLowerCase(),
+            avatar: email.slice(0, 2).toUpperCase(),
+            title: 'Enterprise Collaborator',
+            role: 'member',
+            presence: 'online',
+          };
+          const authSessionObj: AuthSession = {
+            provider: 'email',
+            accessToken,
+            refreshToken,
+            expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+            accountEmail: loggedUser.email,
+            tokenRotationCount: 1,
+            methodLabel: 'Email & Password Auth',
+          };
+          savePersistedSession(
+            {
+              user: loggedUser,
+              authSession: authSessionObj,
+              activeWorkspaceId: get().activeWorkspaceId,
+              activeChannelId: get().activeChannelId,
+            },
+            rememberMe
+          );
+          set((state) => ({
+            users: state.users.some((u) => u.id === loggedUser.id) ? state.users : [...state.users, loggedUser],
+            currentUser: loggedUser,
+            isAuthenticated: true,
+            isAuthView: false,
+            isRestoringSession: false,
+            authSession: authSessionObj,
+          }));
+          return { success: true };
+        }
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Invalid credentials or login failed.' };
+      }
+    }
+
     const { users } = get();
     const existing = users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase());
     const targetUser: User = existing || {
@@ -423,21 +599,34 @@ export const useCollabStore = create<CollabState>((set, get) => ({
 
     const newUsers = existing ? users : [...users, targetUser];
     const jwtSession = issueJWTSession(targetUser);
+    const authSessionObj: AuthSession = {
+      provider: 'email',
+      accessToken: jwtSession.accessToken,
+      refreshToken: jwtSession.refreshToken,
+      expiresAt: jwtSession.expiresAt,
+      accountEmail: targetUser.email,
+      tokenRotationCount: 1,
+      methodLabel: 'Email & Password Auth',
+    };
+
+    savePersistedSession(
+      {
+        user: targetUser,
+        authSession: authSessionObj,
+        activeWorkspaceId: get().activeWorkspaceId,
+        activeChannelId: get().activeChannelId,
+      },
+      rememberMe
+    );
+    apiClient.setTokens(jwtSession.accessToken, jwtSession.refreshToken, rememberMe);
 
     set((state) => ({
       users: newUsers,
       currentUser: targetUser,
       isAuthenticated: true,
       isAuthView: false,
-      authSession: {
-        provider: 'email',
-        accessToken: jwtSession.accessToken,
-        refreshToken: jwtSession.refreshToken,
-        expiresAt: jwtSession.expiresAt,
-        accountEmail: targetUser.email,
-        tokenRotationCount: 1,
-        methodLabel: 'Email & Password Auth',
-      },
+      isRestoringSession: false,
+      authSession: authSessionObj,
       toasts: [
         ...state.toasts,
         {
@@ -454,8 +643,9 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     return { success: true };
   },
 
-  loginWithGmail: async (options?: { email?: string; name?: string; picture?: string }) => {
+  loginWithGmail: async (options?: { email?: string; name?: string; picture?: string; rememberMe?: boolean }) => {
     const { users } = get();
+    const rememberMe = options?.rememberMe ?? true;
     const email = (options?.email || 'maheshmass363@gmail.com').trim().toLowerCase();
     const displayName = options?.name || (email.toLowerCase().includes('mahesh') ? 'Mahesh' : email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()));
     const existing = users.find((u) => u.email.toLowerCase() === email);
@@ -473,21 +663,34 @@ export const useCollabStore = create<CollabState>((set, get) => ({
 
     const newUsers = existing ? users : [...users, targetUser];
     const jwtSession = issueJWTSession(targetUser);
+    const authSessionObj: AuthSession = {
+      provider: 'google',
+      accessToken: jwtSession.accessToken,
+      refreshToken: jwtSession.refreshToken,
+      expiresAt: jwtSession.expiresAt,
+      accountEmail: targetUser.email,
+      tokenRotationCount: 1,
+      methodLabel: 'Google Identity & Gmail OAuth',
+    };
+
+    savePersistedSession(
+      {
+        user: targetUser,
+        authSession: authSessionObj,
+        activeWorkspaceId: get().activeWorkspaceId,
+        activeChannelId: get().activeChannelId,
+      },
+      rememberMe
+    );
+    apiClient.setTokens(jwtSession.accessToken, jwtSession.refreshToken, rememberMe);
 
     set((state) => ({
       users: newUsers,
       currentUser: targetUser,
       isAuthenticated: true,
       isAuthView: false,
-      authSession: {
-        provider: 'google',
-        accessToken: jwtSession.accessToken,
-        refreshToken: jwtSession.refreshToken,
-        expiresAt: jwtSession.expiresAt,
-        accountEmail: targetUser.email,
-        tokenRotationCount: 1,
-        methodLabel: 'Google Identity & Gmail OAuth',
-      },
+      isRestoringSession: false,
+      authSession: authSessionObj,
       toasts: [
         ...state.toasts,
         {
@@ -504,8 +707,9 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     return { success: true };
   },
 
-  signupWithEmail: async (account: { name: string; email: string; password?: string; workspaceName?: string }) => {
+  signupWithEmail: async (account: { name: string; email: string; password?: string; workspaceName?: string; rememberMe?: boolean }) => {
     const { users } = get();
+    const rememberMe = account.rememberMe ?? true;
     const email = account.email.trim().toLowerCase();
     const existing = users.find((u) => u.email.toLowerCase() === email);
     if (existing) {
@@ -531,21 +735,34 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     };
 
     const jwtSession = issueJWTSession(newUser);
+    const authSessionObj: AuthSession = {
+      provider: 'email',
+      accessToken: jwtSession.accessToken,
+      refreshToken: jwtSession.refreshToken,
+      expiresAt: jwtSession.expiresAt,
+      accountEmail: newUser.email,
+      tokenRotationCount: 1,
+      methodLabel: 'Direct Email Registration',
+    };
+
+    savePersistedSession(
+      {
+        user: newUser,
+        authSession: authSessionObj,
+        activeWorkspaceId: get().activeWorkspaceId,
+        activeChannelId: get().activeChannelId,
+      },
+      rememberMe
+    );
+    apiClient.setTokens(jwtSession.accessToken, jwtSession.refreshToken, rememberMe);
 
     set((state) => ({
       users: [...state.users, newUser],
       currentUser: newUser,
       isAuthenticated: true,
       isAuthView: false,
-      authSession: {
-        provider: 'email',
-        accessToken: jwtSession.accessToken,
-        refreshToken: jwtSession.refreshToken,
-        expiresAt: jwtSession.expiresAt,
-        accountEmail: newUser.email,
-        tokenRotationCount: 1,
-        methodLabel: 'Direct Email Registration',
-      },
+      isRestoringSession: false,
+      authSession: authSessionObj,
       toasts: [
         ...state.toasts,
         {
@@ -562,7 +779,11 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     return { success: true };
   },
 
-  loginWithMicrosoft: async (accountType: 'work_school' | 'personal_outlook', emailOverride?: string) => {
+  loginWithMicrosoft: async (
+    accountType: 'work_school' | 'personal_outlook',
+    emailOverride?: string,
+    rememberMe: boolean = true
+  ) => {
     const { users } = get();
     const email = emailOverride || (accountType === 'work_school' ? 'elena.vance@acme.corp' : 'user.outlook@outlook.com');
     const existing = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
@@ -580,22 +801,35 @@ export const useCollabStore = create<CollabState>((set, get) => ({
 
     const newUsers = existing ? users : [...users, targetUser];
     const jwtSession = issueJWTSession(targetUser);
+    const authSessionObj: AuthSession = {
+      provider: 'microsoft',
+      accessToken: jwtSession.accessToken,
+      refreshToken: jwtSession.refreshToken,
+      expiresAt: jwtSession.expiresAt,
+      accountEmail: targetUser.email,
+      tokenRotationCount: 1,
+      tenantId: accountType === 'work_school' ? 'tenant-acme-corp-azure-ad' : 'common-microsoft-account',
+      methodLabel: accountType === 'work_school' ? 'Microsoft Entra ID (Work/School)' : 'Microsoft Personal / Outlook',
+    };
+
+    savePersistedSession(
+      {
+        user: targetUser,
+        authSession: authSessionObj,
+        activeWorkspaceId: get().activeWorkspaceId,
+        activeChannelId: get().activeChannelId,
+      },
+      rememberMe
+    );
+    apiClient.setTokens(jwtSession.accessToken, jwtSession.refreshToken, rememberMe);
 
     set((state) => ({
       users: newUsers,
       currentUser: targetUser,
       isAuthenticated: true,
       isAuthView: false,
-      authSession: {
-        provider: 'microsoft',
-        accessToken: jwtSession.accessToken,
-        refreshToken: jwtSession.refreshToken,
-        expiresAt: jwtSession.expiresAt,
-        accountEmail: targetUser.email,
-        tokenRotationCount: 1,
-        tenantId: accountType === 'work_school' ? 'tenant-acme-corp-azure-ad' : 'common-microsoft-account',
-        methodLabel: accountType === 'work_school' ? 'Microsoft Entra ID (Work/School)' : 'Microsoft Personal / Outlook',
-      },
+      isRestoringSession: false,
+      authSession: authSessionObj,
       toasts: [
         ...state.toasts,
         {
@@ -612,8 +846,9 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     return { success: true };
   },
 
-  loginWithApple: async (options: { hideEmail: boolean; email?: string }) => {
+  loginWithApple: async (options: { hideEmail: boolean; email?: string; rememberMe?: boolean }) => {
     const { users } = get();
+    const rememberMe = options.rememberMe ?? true;
     const relayEmail = options.hideEmail ? `relay.${Math.random().toString(36).substring(2, 8)}@privaterelay.appleid.com` : (options.email || 'developer@apple.user');
     const existing = users.find((u) => u.email.toLowerCase() === relayEmail.toLowerCase());
 
@@ -630,21 +865,34 @@ export const useCollabStore = create<CollabState>((set, get) => ({
 
     const newUsers = existing ? users : [...users, targetUser];
     const jwtSession = issueJWTSession(targetUser);
+    const authSessionObj: AuthSession = {
+      provider: 'apple',
+      accessToken: jwtSession.accessToken,
+      refreshToken: jwtSession.refreshToken,
+      expiresAt: jwtSession.expiresAt,
+      accountEmail: targetUser.email,
+      tokenRotationCount: 1,
+      methodLabel: options.hideEmail ? 'Apple ID (Private Email Relay)' : 'Sign in with Apple',
+    };
+
+    savePersistedSession(
+      {
+        user: targetUser,
+        authSession: authSessionObj,
+        activeWorkspaceId: get().activeWorkspaceId,
+        activeChannelId: get().activeChannelId,
+      },
+      rememberMe
+    );
+    apiClient.setTokens(jwtSession.accessToken, jwtSession.refreshToken, rememberMe);
 
     set((state) => ({
       users: newUsers,
       currentUser: targetUser,
       isAuthenticated: true,
       isAuthView: false,
-      authSession: {
-        provider: 'apple',
-        accessToken: jwtSession.accessToken,
-        refreshToken: jwtSession.refreshToken,
-        expiresAt: jwtSession.expiresAt,
-        accountEmail: targetUser.email,
-        tokenRotationCount: 1,
-        methodLabel: options.hideEmail ? 'Apple ID (Private Email Relay)' : 'Sign in with Apple',
-      },
+      isRestoringSession: false,
+      authSession: authSessionObj,
       toasts: [
         ...state.toasts,
         {
@@ -661,7 +909,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     return { success: true };
   },
 
-  loginWithPhone: async (phoneE164: string) => {
+  loginWithPhone: async (phoneE164: string, otpCode?: string, rememberMe: boolean = true) => {
     const { users } = get();
     const syntheticEmail = `phone.${phoneE164.replace(/\D/g, '')}@mobile.collabflow.internal`;
     const existing = users.find((u) => u.email === syntheticEmail);
@@ -679,21 +927,34 @@ export const useCollabStore = create<CollabState>((set, get) => ({
 
     const newUsers = existing ? users : [...users, targetUser];
     const jwtSession = issueJWTSession(targetUser);
+    const authSessionObj: AuthSession = {
+      provider: 'phone',
+      accessToken: jwtSession.accessToken,
+      refreshToken: jwtSession.refreshToken,
+      expiresAt: jwtSession.expiresAt,
+      accountEmail: syntheticEmail,
+      tokenRotationCount: 1,
+      methodLabel: `Phone OTP (${phoneE164})`,
+    };
+
+    savePersistedSession(
+      {
+        user: targetUser,
+        authSession: authSessionObj,
+        activeWorkspaceId: get().activeWorkspaceId,
+        activeChannelId: get().activeChannelId,
+      },
+      rememberMe
+    );
+    apiClient.setTokens(jwtSession.accessToken, jwtSession.refreshToken, rememberMe);
 
     set((state) => ({
       users: newUsers,
       currentUser: targetUser,
       isAuthenticated: true,
       isAuthView: false,
-      authSession: {
-        provider: 'phone',
-        accessToken: jwtSession.accessToken,
-        refreshToken: jwtSession.refreshToken,
-        expiresAt: jwtSession.expiresAt,
-        accountEmail: syntheticEmail,
-        tokenRotationCount: 1,
-        methodLabel: `Phone OTP (${phoneE164})`,
-      },
+      isRestoringSession: false,
+      authSession: authSessionObj,
       toasts: [
         ...state.toasts,
         {
@@ -710,38 +971,55 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     return { success: true };
   },
 
-  loginAsPersona: (userId: string) => {
+  loginAsPersona: (userId: string, rememberMe: boolean = true) => {
     const { users } = get();
     const user = users.find((u) => u.id === userId);
     if (!user) return;
     const jwtSession = issueJWTSession(user);
+    const authSessionObj: AuthSession = {
+      provider: 'demo',
+      accessToken: jwtSession.accessToken,
+      refreshToken: jwtSession.refreshToken,
+      expiresAt: jwtSession.expiresAt,
+      accountEmail: user.email,
+      tokenRotationCount: 1,
+      methodLabel: `Persona (${user.name} - ${user.role})`,
+    };
+
+    savePersistedSession(
+      {
+        user,
+        authSession: authSessionObj,
+        activeWorkspaceId: get().activeWorkspaceId,
+        activeChannelId: get().activeChannelId,
+      },
+      rememberMe
+    );
+    apiClient.setTokens(jwtSession.accessToken, jwtSession.refreshToken, rememberMe);
 
     set({
       currentUser: user,
       isAuthenticated: true,
       isAuthView: false,
-      authSession: {
-        provider: 'demo',
-        accessToken: jwtSession.accessToken,
-        refreshToken: jwtSession.refreshToken,
-        expiresAt: jwtSession.expiresAt,
-        accountEmail: user.email,
-        tokenRotationCount: 1,
-        methodLabel: `Persona (${user.name} - ${user.role})`,
-      },
+      isRestoringSession: false,
+      authSession: authSessionObj,
     });
   },
 
   logout: () => {
+    clearPersistedSession();
+    apiClient.clearTokens();
     set({
       isAuthenticated: false,
       isAuthView: true,
+      isRestoringSession: false,
     });
   },
 
   completeOnboarding: (
     account: { name: string; email: string },
-    workspace: { name: string; slug: string; useCase: string; teamSize: string }
+    workspace: { name: string; slug: string; useCase: string; teamSize: string },
+    rememberMe: boolean = true
   ) => {
     const { users, workspaces, channels } = get();
     const newUserId = `user-owner-${Date.now()}`;
@@ -787,6 +1065,26 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     };
 
     const jwtSession = issueJWTSession(newUser);
+    const authSessionObj: AuthSession = {
+      provider: 'email',
+      accessToken: jwtSession.accessToken,
+      refreshToken: jwtSession.refreshToken,
+      expiresAt: jwtSession.expiresAt,
+      accountEmail: newUser.email,
+      tokenRotationCount: 1,
+      methodLabel: `Workspace Creation (${workspace.name})`,
+    };
+
+    savePersistedSession(
+      {
+        user: newUser,
+        authSession: authSessionObj,
+        activeWorkspaceId: newWsId,
+        activeChannelId: generatedChannels[0].id,
+      },
+      rememberMe
+    );
+    apiClient.setTokens(jwtSession.accessToken, jwtSession.refreshToken, rememberMe);
 
     set((state) => ({
       users: [newUser, ...users],
@@ -797,6 +1095,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
       activeChannelId: generatedChannels[0].id,
       isAuthenticated: true,
       isAuthView: false,
+      isRestoringSession: false,
       enterpriseTrial: {
         isActive: true,
         plan: 'enterprise_trial',
@@ -805,15 +1104,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         tier: 'Enterprise Scale',
         features: state.enterpriseTrial.features,
       },
-      authSession: {
-        provider: 'email',
-        accessToken: jwtSession.accessToken,
-        refreshToken: jwtSession.refreshToken,
-        expiresAt: jwtSession.expiresAt,
-        accountEmail: newUser.email,
-        tokenRotationCount: 1,
-        methodLabel: `Workspace Creation (${workspace.name})`,
-      },
+      authSession: authSessionObj,
       toasts: [
         ...state.toasts,
         {

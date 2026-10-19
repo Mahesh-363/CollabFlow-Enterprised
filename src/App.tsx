@@ -36,10 +36,17 @@ export default function App() {
   const {
     theme,
     isAuthView,
+    isRestoringSession,
+    restoreSession,
     activeNav,
     recordUserActivity,
     checkInactivityTimer,
   } = useCollabStore();
+
+  // Restore authenticated session on app load before rendering auth screen
+  React.useEffect(() => {
+    restoreSession();
+  }, [restoreSession]);
 
   // Real-time user activity & inactivity decay timer
   React.useEffect(() => {
@@ -80,6 +87,22 @@ export default function App() {
     midnight: 'bg-black text-neutral-100',
     light: 'bg-slate-50 text-slate-900',
   }[theme];
+
+  // While restoring session from storage or backend, show a short loading state (not login screen)
+  if (isRestoringSession) {
+    return (
+      <div className="min-h-screen w-full flex flex-col items-center justify-center bg-[#0a0d14] text-slate-100 font-sans">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center">
+            <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+          </div>
+          <div className="text-center">
+            <p className="text-xs font-semibold text-slate-300">Restoring session...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // If user is in authentication / onboarding mode
   if (isAuthView) {
