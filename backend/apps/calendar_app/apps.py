@@ -2,6 +2,6 @@ from django.apps import AppConfig
 
 
 class CalendarAppConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'apps.calendar_app'
-    verbose_name = 'Calendar System'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.calendar_app"
+    verbose_name = "Calendar System"
