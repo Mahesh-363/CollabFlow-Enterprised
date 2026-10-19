@@ -84,7 +84,7 @@ export default function App() {
   // If user is in authentication / onboarding mode
   if (isAuthView) {
     return (
-      <div className="min-h-screen w-screen overflow-x-hidden bg-[#0a0d14] text-slate-100 font-sans">
+      <div className="min-h-screen w-full overflow-y-auto overflow-x-hidden bg-[#0a0d14] text-slate-100 font-sans">
         <AuthPage />
         <PresenceInspectorModal />
         <ArchitectureExplorerModal />

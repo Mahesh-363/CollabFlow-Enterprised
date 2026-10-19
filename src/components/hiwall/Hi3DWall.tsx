@@ -275,11 +275,15 @@ export const Hi3DWall: React.FC<{ className?: string }> = ({ className = '' }) =
       </div>
 
       {/* 3D Canvas container with @react-three/fiber */}
-      <div className="relative w-full h-[260px] sm:h-[300px] rounded-xl bg-gradient-to-b from-slate-950/80 to-[#050811] border border-slate-800 overflow-hidden cursor-crosshair">
+      <div
+        className="relative w-full h-[260px] sm:h-[300px] rounded-xl bg-gradient-to-b from-slate-950/80 to-[#050811] border border-slate-800 overflow-hidden cursor-crosshair touch-pan-y"
+        style={{ touchAction: 'pan-y' }}
+      >
         <Canvas
           camera={{ position: [0, 0, 5], fov: 48 }}
           dpr={[1, 2]}
           gl={{ antialias: true, alpha: true }}
+          style={{ touchAction: 'pan-y' }}
         >
           <WallScene
             onWaveTriggered={() => setWaveCount((c) => c + 1)}

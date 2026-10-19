@@ -476,7 +476,7 @@ export const AuthPage: React.FC = () => {
       </header>
 
       {/* MAIN SPLIT-SCREEN VIEWPORT */}
-      <main className="relative z-10 flex-1 grid grid-cols-1 lg:grid-cols-12 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-10 gap-8 items-center">
+      <main className="relative z-10 flex-1 grid grid-cols-1 lg:grid-cols-12 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-10 pb-12 sm:pb-16 gap-8 items-start lg:items-center">
         {/* ======================================================== */}
         {/* LEFT-SIDE BRAND & PRODUCT SHOWCASE */}
         {/* ======================================================== */}
@@ -501,7 +501,7 @@ export const AuthPage: React.FC = () => {
 
           {/* INTERACTIVE 3D EXPERIENCE SHOWCASE (HI WALL & WALL-E) */}
           <div className="space-y-2.5 max-w-xl">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="inline-flex items-center p-1 bg-slate-900/90 border border-slate-800 rounded-xl shadow-inner">
                 <button
                   type="button"
