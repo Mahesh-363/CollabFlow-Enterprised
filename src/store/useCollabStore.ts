@@ -339,6 +339,17 @@ export const useCollabStore = create<CollabState>((set, get) => ({
   backendStatusText: 'Standby / Local In-Memory Fallback Active',
 
   checkBackendHealth: async () => {
+    const rawApiUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+    if (!rawApiUrl) {
+      set({
+        backendConnected: false,
+        backendLatencyMs: null,
+        backendStatusText: 'Demo Mode Active (Local)',
+        isCheckingBackend: false,
+      });
+      return false;
+    }
+
     set({ isCheckingBackend: true });
     try {
       const res = await apiClient.checkHealth();
@@ -357,7 +368,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         set({
           backendConnected: false,
           backendLatencyMs: null,
-          backendStatusText: 'Local In-Memory Mode Active (Vite Preview)',
+          backendStatusText: 'Demo Mode Active (Local)',
           isCheckingBackend: false,
         });
         return false;
@@ -366,7 +377,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
       set({
         backendConnected: false,
         backendLatencyMs: null,
-        backendStatusText: 'Local In-Memory Mode Active (Vite Preview)',
+        backendStatusText: 'Demo Mode Active (Local)',
         isCheckingBackend: false,
       });
       return false;
@@ -1589,9 +1600,11 @@ export const useCollabStore = create<CollabState>((set, get) => ({
 
 // Initialize client-side socket event handlers and check backend health
 if (typeof window !== 'undefined') {
-  setTimeout(() => {
-    useCollabStore.getState().checkBackendHealth().catch(() => {});
-  }, 100);
+  if (import.meta.env.VITE_API_URL) {
+    setTimeout(() => {
+      useCollabStore.getState().checkBackendHealth().catch(() => {});
+    }, 100);
+  }
 
   socketManager.subscribe('chat.message', (payload: any) => {
     if (payload && payload.id) {
